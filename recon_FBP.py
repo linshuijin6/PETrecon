@@ -1,56 +1,26 @@
-""" 引用函数库 """
+import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from skimage.transform import iradon
+import matplotlib.pyplot as plt
+from utils.transfer_si import s2i
 
-""" **.** 周一 """
-# main_content:
-
-
-def monday():
-
-    return True
+sinogram = np.load('/mnt/data/linshuijin/PETrecon/simulation_angular/angular_360/transverse_sinoHD.npy', allow_pickle=True)
+pic = np.load('/mnt/data/linshuijin/PETrecon/simulation_angular/angular_360/transverse_picHD.npy', allow_pickle=True)
+# 创建正弦图
+theta = np.linspace(0., 360., max(sinogram.shape), endpoint=False)
 
 
-""" **.** 周二 """
-# main_content:
+# 使用滤波反投影 (FBP) 重建
+reconstruction_fbp = iradon(sinogram[2, :, :], theta=theta, filter_name='ramp')
 
+sinogram = torch.from_numpy(sinogram)
+recon_s2i = s2i(sinogram[2, :, :]).cpu()
+# 显示重建图像
+plt.imshow(reconstruction_fbp, cmap='gray')
+plt.show()
 
-def tuesday():
+plt.imshow(recon_s2i, cmap='gray')
+plt.show()
 
-    return True
-
-
-""" **.** 周三 """
-# main_content:
-
-
-def thursday():
-
-    return True
-
-
-""" **.** 周四 """
-# main_content:
-
-
-def wednesday():
-
-    return True
-
-
-""" **.** 周五 """
-# main_content:
-
-
-def friday():
-
-    return True
-
-
-if __name__ == '__main__':
-    monday()
-    # tuesday()
-    # thursday()
-    # wednesday()
-    # friday()
+plt.imshow(pic[2, :, :], cmap='gray')
+plt.show()
