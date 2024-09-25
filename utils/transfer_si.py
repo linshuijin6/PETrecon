@@ -27,40 +27,45 @@ def gaussFilter(img, fwhm, is3d=False, batch_size=1, image_voxelSizeCm=(0.41725 
     return imOut.flatten('F')
 
 
-def i2s(img, sinogram_nAngular=180, psf=0):
-    sinogram_nRadial = img.shape[0]
-    if np.ndim(img) == 2:
+def i2s(img, AN, sinogram_nAngular=180, psf=0):
+    # img.shape = (batchsize, h, w)
+    img = img.squeeze(1) if len(img.shape)==4 else img
+    img = img.float()
+    assert isinstance(img, torch.Tensor)
+    sinogram_nRadial = img.shape[1]
+    # img = img*AN
+    if img.ndimension() == 2:
         batch_size = 1
-        img = img[None, :, :]
+        img = img.unsqueeze(0)
     else:
         batch_size = img.shape[0]
-    img = img.reshape([batch_size, np.prod(img.shape[1:3])], order='F')
+    img = img.view(batch_size, -1)
     if psf:
         for b in range(batch_size):
             img[b, :] = gaussFilter(img[b, :], psf)
     dims = [batch_size, sinogram_nRadial, sinogram_nAngular]
     # if tof: dims.append(self.sinogram.nTofBins)
-    y = np.zeros(dims, dtype='float32')
-    matrixSize = img.shape
+    y = torch.zeros(dims, dtype=torch.float32, device=img.device)
+    matrixSize = [sinogram_nRadial, sinogram_nRadial]
     q = sinogram_nAngular // 2
 
     geoMatrix = []
-    geoMatrix.append(np.load("../tmp_1/" + 'geoMatrix-0.npy', allow_pickle=True))
+    geoMatrix.append(np.load("./tmp_1/" + 'geoMatrix-0.npy', allow_pickle=True))
 
     for i in range(sinogram_nAngular // 2):
         for j in range(sinogram_nRadial):
             M0 = geoMatrix[0][i, j]
             if not np.isscalar(M0):
-                M = M0[:, 0:3].astype('int32')
-                G = M0[:, 3] / 1e4
+                M = torch.tensor(M0[:, 0:3], dtype=torch.int32, device=img.device)  # 转为 tensor
+                G = torch.tensor(M0[:, 3] / 1e4, dtype=torch.float32, device=img.device)  # 转为 tensor
                 idx1 = M[:, 0] + M[:, 1] * matrixSize[0]
                 idx2 = M[:, 1] + matrixSize[0] * (matrixSize[0] - 1 - M[:, 0])
                 for b in range(batch_size):
-                    y[b, j, i] = G.dot(img[b, idx1])
-                    y[b, j, i + q] = G.dot(img[b, idx2])
+                    y[b, j, i] = torch.dot(G, img[b, idx1.long()])
+                    y[b, j, i + q] = torch.dot(G, img[b, idx2.long()])
     if batch_size == 1:
         y = y[0, :, :]
-    print(f'{batch_size} batches forward-projected\n')
+    # print(f'{batch_size} batches forward-projected\n')
     return y
 
 
@@ -165,6 +170,18 @@ def interp(x, xp, fp):
 
     slope = (y_right - y_left) / (x_right - x_left)
     return y_left + slope * (x - x_left)
+
+
+def s2i_batch(radon_image):
+    # radon_image: batchsize, channel=1, h, w
+    assert len(radon_image.shape) == 4
+    radon_image = radon_image.squeeze(1)
+    sino_t = []
+    for sino in radon_image:
+        sino_t.append(s2i(sino))
+    out_sino = torch.stack(sino_t, 0)
+    out_sino = out_sino.unsqueeze(1)
+    return out_sino
 
 
 def s2i(radon_image, theta=None, output_size=None,

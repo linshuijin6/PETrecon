@@ -47,7 +47,7 @@ mmr = {
         'detectorRadiusCm':      32.8,  # 探测器半径（单位：厘米）
         'sinogramDOIcm':         0.67,  # 正弦图深度的兴趣 (Depth of Interest, DOI)（单位：厘米）
         'LORDOIcm':              0.96,  # 响应线 (Line of Response, LOR) 深度（单位：厘米）
-        'nRadialBins':           336,   # 径向 bin 的数量
+        'nRadialBins':           172,   # 径向 bin 的数量, 等于重建图的尺寸
         'nMash':                 1,     # 合并数 (mash factor)
         'rCrystalDimCm':         2.0,   # 晶体径向尺寸（单位：厘米）
         'xCrystalDimCm':         0.41725, # 晶体横向尺寸（单位：厘米）
@@ -949,7 +949,7 @@ class BuildGeometry_v4:
                 if not np.isscalar(M0):
                     M = M0[:,0:3].astype('int32')
                     G = M0[:,3]/1e4
-                    G = torch.from_numpy(G).float().to(self.device)
+                    G = torch.from_numpy(G)
                     idx1 = M[:,0] + M[:,1]*matrixSize[0]
                     idx2 = M[:,1] + matrixSize[0]*(matrixSize[0]-1-M[:,0])
                     if tof:
@@ -1450,7 +1450,7 @@ class BuildGeometry_v4:
 
         if AF is None:
              if mumap is None:
-                  AF = 1
+                  AF = np.ones_like(img)
              else:
                   if np.ndim(mumap)!=np.ndim(img):
                        raise ValueError('mumap must have the same size as input img')
@@ -1471,7 +1471,8 @@ class BuildGeometry_v4:
                             NF[b,:,:,i] = gaps*np.exp(-1*np.random.rand(self.sinogram.nRadialBins,self.sinogram.nAngularBins))
              else:
                   for b in range(batch_size):
-                       NF[b,:,:] = gaps*np.exp(-1*np.random.rand(self.sinogram.nRadialBins,self.sinogram.nAngularBins))
+                      pass
+                       # NF[b,:,:] = 1*np.exp(-1*np.random.rand(self.sinogram.nRadialBins,self.sinogram.nAngularBins))
              if batch_size == 1:
                   NF = NF[0]
 
@@ -1479,8 +1480,11 @@ class BuildGeometry_v4:
              counts = counts*np.ones(batch_size,)
         truesFraction = 1 - randomsFraction
 
-        y = projector(img)
-        y_att = y*AF
+        img = img*AF
+        img = img[:, np.newaxis, :, :]
+
+        y = projector(torch.from_numpy(img))
+        y_att = y
         y_att[np.isinf(y_att)] = 0
         y_att[y_att < 0] = 0
         y_poisson = np.zeros_like(y)
@@ -1516,8 +1520,8 @@ class BuildGeometry_v4:
                 r_poisson = np.random.poisson(r_poisson*scale_factor_randoms)/scale_factor_randoms
         else:
             Randoms = 0
-        prompts = y_poisson*NF + Randoms
-        return prompts, AF,NF, Randoms
+        prompts = y_poisson*1 + Randoms
+        return prompts, AF, Randoms
 
 
     def zeroNanInfs(self,x):

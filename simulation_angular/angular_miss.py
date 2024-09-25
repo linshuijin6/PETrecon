@@ -37,7 +37,7 @@ def generate_mask(dimensions, sigma):
 
 if __name__ == '__main__':
     temPath = r'./tmp_1'
-    PET = BuildGeometry_v4('mmr', 0.5)  #scanner mmr, with radial crop factor of 50%
+    PET = BuildGeometry_v4('mmr', 0)  #scanner mmr, with radial crop factor of 50%
     PET.loadSystemMatrix(temPath, is3d=False)
     # PET.plotMichelogram()
 
