@@ -151,7 +151,8 @@ class DatasetPETRecon(data.Dataset):
         # X, sinogram; Y, pic
         X_train, AN_train, Y_train, X_test, AN_test, Y_test, X_validation, AN_validation, Y_validation = load_data(file_path, name_pre)
         X_train, Y_train, AN_train = torch.from_numpy(X_train), torch.from_numpy(Y_train), torch.from_numpy(AN_train)
-        X_train_noisy1, X_train_noisy2 = add_noise(X_train, mode='g'), add_noise(X_train, mode='g')
+        # X_train_noisy1, X_train_noisy2 = add_noise(X_train, mode='g'), add_noise(X_train, mode='g')
+        X_train_noisy1, X_train_noisy2 = add_noise(X_train, mode='g'), X_train  # noise2noise策略
         X_train_noisy1 = torch.unsqueeze(X_train_noisy1, 1)
         X_train_noisy2 = torch.unsqueeze(X_train_noisy2, 1)
         Y_train = torch.unsqueeze(Y_train, 1)

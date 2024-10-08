@@ -24,17 +24,17 @@ def normlazation2one(input_tensor):
 
 
 class PETReconNet(nn.Module):
-    def __init__(self, device, num_block=3):
+    def __init__(self, geo, device, num_block=3, img_size=168):
         super().__init__()
         self.num_block = num_block
-        self.device = device
+        self.geo = geo
         # self.PET = PET
         # self.norm1 = nn.BatchNorm2d(1)
         # self.norm2 = nn.BatchNorm2d(1)
         # self.norm3 = nn.BatchNorm2d(1)
-        self.denoiseBlock1 = SwinIR(img_size=168)
-        self.denoiseBlock2 = SwinIR(img_size=168)
-        self.denoiseBlock3 = SwinIR(img_size=168)
+        self.denoiseBlock1 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
+        self.denoiseBlock2 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
+        self.denoiseBlock3 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
 
     def forward(self, image_p, sino_o, AN, mask):
         image = self.denoiseBlock1(image_p)
@@ -50,11 +50,11 @@ class PETReconNet(nn.Module):
         return image
 
     def DCLayer(self, x_p, mask, sino_o, AN):
-        sino_re = i2s(x_p, AN, sinogram_nAngular=360)
+        sino_re = i2s(x_p, AN, geoMatrix=self.geo, sinogram_nAngular=360)
         sino_re = sino_re.to(self.device)
         sino_re = sino_re[None, None, :, :]
         out_sino = sino_o*(1-mask) + sino_re*mask
-        out_sino = s2i_batch(out_sino)
+        out_sino = s2i_batch(out_sino, device_now=self.device)
         # if out_sino.shape[0] == 1:
         #     out_sino = s2i(out_sino)
         #     # out_sino = out_sino[None, None, :, :]
@@ -73,8 +73,7 @@ class PETDenoiseNet(nn.Module):
     def __init__(self, device, num_block=3):
         super().__init__()
         self.num_block = num_block
-        self.device = device
-        self.denoiseBlock1 = SwinIR(img_size=168, embed_dim=32, depths=[4, 4], num_heads=[4, 4], window_size=4, mlp_ratio=2)
+        self.denoiseBlock1 = SwinIR(img_size=168, embed_dim=32, depths=[3, 3], num_heads=[4, 4], window_size=4, mlp_ratio=2).to(device)
         # self.denoiseBlock2 = SwinIR(img_size=168)
         # self.denoiseBlock3 = SwinIR(img_size=168)
 

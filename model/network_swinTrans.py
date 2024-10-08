@@ -266,6 +266,7 @@ class SwinTransformerBlock(nn.Module):
         shortcut = x
         x = self.norm1(x)  # x (4,9216,180) (batch_in_each_GPU, H*W, embedding_channel)
         x = x.view(B, H, W, C)  # x (4,96,96,180) (batch_in_each_GPU, embedding_channel, H, W)
+        # print(C)
 
         # cyclic shift
         if self.shift_size > 0:
@@ -708,7 +709,7 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=1,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
+                 embed_dim=96, depths=[6, 6], num_heads=[6, 6],
                  window_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,

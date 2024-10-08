@@ -9,7 +9,7 @@ pic = np.load('simulation_angular/angular_180/pic_HD.npy', allow_pickle=True)
 # 创建正弦图
 # theta = np.linspace(0., 360., max(sinogram.shape), endpoint=False)
 
-sino_me = i2s(torch.from_numpy(pic), AN)
+sino_me = i2s_batch(torch.from_numpy(pic), AN)
 
 
 # 使用滤波反投影 (FBP) 重建

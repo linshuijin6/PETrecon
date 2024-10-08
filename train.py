@@ -30,30 +30,27 @@ def simulate_geometry(device):
     return PET
 
 
-def main(file_path):
+def main(file_path, geo, n_theta):
     # # 数据
     # setup(rank, world_size)
+    # dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
     train_set = DatasetPETRecon(file_path, 'train')
     # train_sampler = DistributedSampler(train_set, shuffle=True, drop_last=True, seed=seed)
     train_loader = DataLoader(train_set, batch_size=4, shuffle=True)
 
     # 模型初始化
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    rank = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    world_size = torch.cuda.device_count()  # 使用所有可用的 GPU
     # PET = simulate_geometry(device)
 
-    denoise_model_pre = nn.DataParallel(PETDenoiseNet(device=device)).to(device)
-    denoise_model = nn.DataParallel(PETReconNet(device=device)).to(
-        device)  # x (4,1,96,96) (batch_size_in_each_GPU, input_image_channel, H, W)
-    # denoise_model_pre = DDP(denoise_model_pre, device_ids=[rank])
-    # denoise_model = DDP(denoise_model, device_ids=[rank])
+    denoise_model_pre = PETDenoiseNet(device=rank)
+    denoise_model = PETReconNet(geo, img_size=168, device=rank)
 
     # print(torch.cuda.memory_summary())
 
     criterion = nn.MSELoss()
     # criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(denoise_model.parameters(), lr=0.01)
+    optimizer = optim.Adam(list(denoise_model.parameters()) + list(denoise_model_pre.parameters()), lr=0.01)
 
     # 训练
     num_epochs = 100
@@ -63,7 +60,7 @@ def main(file_path):
         running_loss = 0.0
         for inputs, _ in train_loader:
             x1, x2, AN = inputs
-            x1, x2, AN = x1.to(device), x2.to(device), AN.to(device)
+            x1, x2, AN = x1.to(rank), x2.to(rank), AN.to(rank)
 
             # print(torch.cuda.memory_summary())
 
@@ -76,13 +73,13 @@ def main(file_path):
             # PET图去噪
 
             mask_p1, mask_p2 = generate_mask(aver_x.shape, 0.01)
-            mask_p1, mask_p2 = torch.from_numpy(mask_p1).unsqueeze(1).float().to(device), torch.from_numpy(mask_p2).unsqueeze(1).float().to(device)
+            mask_p1, mask_p2 = torch.from_numpy(mask_p1).unsqueeze(1).float().to(rank), torch.from_numpy(mask_p2).unsqueeze(1).float().to(rank)
             sino_p1, sino_p2 = aver_x * mask_p2, aver_x * mask_p1
-            pic_in_p1, pic_in_p2 = s2i_batch(sino_p1), s2i_batch(sino_p2)
+            pic_in_p1, pic_in_p2 = s2i_batch(sino_p1, n_theta, device_now=rank), s2i_batch(sino_p2, n_theta, device_now=rank)
             pic_recon_p1, pic_recon_p2 = denoise_model(pic_in_p1, aver_x, AN, mask_p1), denoise_model(pic_in_p2, aver_x, AN, mask_p2)
 
             # 计算mask角度下的loss
-            sino_recon_p1, sino_recon_p2 = i2s(pic_recon_p1, AN, sinogram_nAngular=360), i2s(pic_recon_p2, AN, sinogram_nAngular=360)
+            sino_recon_p1, sino_recon_p2 = i2s(pic_recon_p1, AN, geoMatrix=geo, sinogram_nAngular=360), i2s(pic_recon_p2, AN, geoMatrix=geo, sinogram_nAngular=360)
             sino_recon_p1 = sino_recon_p1[None, None, :, :] if len(sino_recon_p1.shape) == 2 else sino_recon_p1[:, None, :, :]
             sino_recon_p2 = sino_recon_p2[None, None, :, :] if len(sino_recon_p2.shape) == 2 else sino_recon_p2[:, None, :, :]
             sino_recon_p1_m2, sino_recon_p2_m1 = sino_recon_p1 * mask_p2, sino_recon_p2 * mask_p1
@@ -105,15 +102,18 @@ def main(file_path):
 
 
 if __name__ == '__main__':
-    temPath = r'./tmp_1'
-    PET = BuildGeometry_v4('mmr', 0)  # scanner mmr, with radial crop factor of 50%
-    PET.loadSystemMatrix(temPath, is3d=False)
+    n_theta = 180
+    recon_size = 128
+    temPath = f'./tmp_{n_theta}_{recon_size}*{recon_size}/'
+    # PET = BuildGeometry_v4('mmr', 0)  # scanner mmr, with radial crop factor of 50%
+    # PET.loadSystemMatrix(temPath, is3d=False)
+
+    geoMatrix = []
+    geoMatrix.append(np.load(temPath + 'geoMatrix-0.npy', allow_pickle=True))
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"  # 绕过 GPU 0，只使用 GPU 1 和 GPU 2
     world_size = torch.cuda.device_count()
-    # path = './simulation_angular/angular_180'
+    path = f'./simulation_angular/angular_{n_theta}'
     os.environ['MASTER_ADDR'] = '10.181.8.117'
     os.environ['MASTER_PORT'] = '12345'
-    # torch.multiprocessing.spawn(main, args=(world_size, path), nprocs=world_size, join=True)
-
-    main('./simulation_angular/angular_360')
+    main(path, geoMatrix, n_theta)

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="linshuijin@10.181.8.117:3001 password (13)" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="linshuijin@10.181.8.117:3001 password (16)" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
       <paths name="linshuijin@10.181.8.117:3001 password">
@@ -32,6 +32,27 @@
         </serverdata>
       </paths>
       <paths name="linshuijin@10.181.8.117:3001 password (13)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/mnt/data/linshuijin/PETrecon" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="linshuijin@10.181.8.117:3001 password (14)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="linshuijin@10.181.8.117:3001 password (15)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/mnt/data/linshuijin/PETrecon" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="linshuijin@10.181.8.117:3001 password (16)">
         <serverdata>
           <mappings>
             <mapping deploy="/mnt/data/linshuijin/PETrecon" local="$PROJECT_DIR$" />
