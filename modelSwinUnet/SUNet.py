@@ -1,6 +1,8 @@
+import numpy as np
 import torch.nn as nn
-from SUNet_detail import SUNet
-
+from modelSwinUnet.SUNet_detail import SUNet
+import torch.nn.functional as F
+import torch
 
 class SUNet_model(nn.Module):
     def __init__(self, config):
@@ -24,10 +26,36 @@ class SUNet_model(nn.Module):
                                use_checkpoint=config['SWINUNET']['USE_CHECKPOINTS'])
 
     def forward(self, x):
+        x_size = (x.size(2), x.size(3))
+        # x = self.padIn(x)
         if x.size()[1] == 1:
             x = x.repeat(1, 3, 1, 1)
-        logits = self.swin_unet(x)
-        return logits
+        x = self.swin_unet(x)
+        # x = self.padOut(x_size, x)
+        return x
+
+    def padIn(self, in_data):
+        h, w = in_data.size(2), in_data.size(3)
+        full_size = 2 ** np.ceil(np.log2(h))
+        pad_h = int(max(0, full_size-h))
+        pad_w = int(max(0, full_size-w))
+        padding_size = (pad_w//2, pad_w-pad_w//2, pad_h//2, pad_h-pad_h//2)
+        padded = F.pad(in_data, padding_size, mode='constant', value=0)
+        return padded
+
+    def padOut(self, x_size, in_data):
+        h, w = x_size
+        ph, pw = in_data.size(2), in_data.size(3)
+        cut_size_h = (ph-h)//2
+        cut_size_w = (pw-w)//2
+        out_data = in_data[:, :, cut_size_h:cut_size_h+h, cut_size_w:cut_size_w+w]
+        return out_data
+
+
+
+
+
+
     
 if __name__ == '__main__':
     from utils.model_utils import network_parameters

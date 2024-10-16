@@ -938,7 +938,7 @@ if __name__ == '__main__':
     print('swinmr')
     model = SwinIR(upscale=1,
                    in_chans=1,
-                   img_size=[256, 256],
+                   img_size=[128, 128],
                    window_size=8,
                    img_range=1.0,
                    depths=[6, 6, 6, 6, 6, 6],

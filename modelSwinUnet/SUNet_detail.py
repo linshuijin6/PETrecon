@@ -722,10 +722,11 @@ class SUNet(nn.Module):
     # Dencoder and Skip connection
     def forward_up_features(self, x, x_downsample):
         for inx, layer_up in enumerate(self.layers_up):
+            layer_depth = len(self.layers_up) - 1
             if inx == 0:
                 x = layer_up(x)
             else:
-                x = torch.cat([x, x_downsample[3 - inx]], -1)  # concat last dimension
+                x = torch.cat([x, x_downsample[layer_depth - inx]], -1)  # concat last dimension
                 x = self.concat_back_dim[inx](x)
                 x = layer_up(x)
 

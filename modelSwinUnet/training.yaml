@@ -8,8 +8,8 @@ SWINUNET:
   PATCH_SIZE: 4
   WIN_SIZE: 8
   EMB_DIM: 96
-  DEPTH_EN: [8, 8, 8, 8]
-  HEAD_NUM: [8, 8, 8, 8]
+  DEPTH_EN: [4, 4]
+  HEAD_NUM: [8, 8]
   MLP_RATIO: 4.0
   QKV_BIAS: True
   QK_SCALE: 8

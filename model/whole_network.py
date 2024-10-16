@@ -5,7 +5,7 @@ from geometry.BuildGeometry_v4 import BuildGeometry_v4
 from model.network_swinTrans import SwinIR
 from recon_astraFBP import sino2pic as s2p
 from utils.transfer_si import i2s, s2i, s2i_batch
-
+from modelSwinUnet.SUNet import SUNet_model
 
 def normlazation2one(input_tensor):
     # 假设输入的 tensor 形状为 (batchsize, channels=1, h, w)
@@ -24,17 +24,20 @@ def normlazation2one(input_tensor):
 
 
 class PETReconNet(nn.Module):
-    def __init__(self, geo, device, num_block=3, img_size=168):
+    def __init__(self, radon, device, config, num_block=3):
         super().__init__()
         self.num_block = num_block
-        self.geo = geo
+        self.radon = radon
+        # self.n_theta = 2 * self.geo[0].shape[0]
+        self.device = device
         # self.PET = PET
         # self.norm1 = nn.BatchNorm2d(1)
         # self.norm2 = nn.BatchNorm2d(1)
         # self.norm3 = nn.BatchNorm2d(1)
-        self.denoiseBlock1 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
-        self.denoiseBlock2 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
-        self.denoiseBlock3 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
+        # self.denoiseBlock1 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
+        self.denoiseBlock1 = SUNet_model(config).to(self.device)
+        # self.denoiseBlock2 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
+        # self.denoiseBlock3 = SwinIR(img_size, depths=[3, 3], num_heads=[4, 4]).to(device)
 
     def forward(self, image_p, sino_o, AN, mask):
         image = self.denoiseBlock1(image_p)
@@ -50,11 +53,11 @@ class PETReconNet(nn.Module):
         return image
 
     def DCLayer(self, x_p, mask, sino_o, AN):
-        sino_re = i2s(x_p, AN, geoMatrix=self.geo, sinogram_nAngular=360)
+        sino_re = self.radon.forward(x_p)
         sino_re = sino_re.to(self.device)
-        sino_re = sino_re[None, None, :, :]
-        out_sino = sino_o*(1-mask) + sino_re*mask
-        out_sino = s2i_batch(out_sino, device_now=self.device)
+        sino_re = sino_re[:, None, :, :]
+        out_sino = normlazation2one(sino_o)*(1-mask) + normlazation2one(sino_re)*mask
+        out_pic = self.radon.filter_backprojection(out_sino)
         # if out_sino.shape[0] == 1:
         #     out_sino = s2i(out_sino)
         #     # out_sino = out_sino[None, None, :, :]
@@ -66,7 +69,7 @@ class PETReconNet(nn.Module):
         #         sino_t.append(s2i(sino))
         #     out_sino = torch.stack(sino_t, 0)
         #     out_sino = out_sino.unsqueeze([0, 1])
-        return out_sino
+        return out_pic
 
 
 class PETDenoiseNet(nn.Module):

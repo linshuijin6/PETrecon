@@ -49,7 +49,7 @@ mmr = {
         'detectorRadiusCm':      32.8,  # 探测器半径（单位：厘米）
         'sinogramDOIcm':         0.67,  # 正弦图深度的兴趣 (Depth of Interest, DOI)（单位：厘米）
         'LORDOIcm':              0.96,  # 响应线 (Line of Response, LOR) 深度（单位：厘米）
-        'nRadialBins':           128,   # 径向 bin 的数量, 等于重建图的尺寸
+        'nRadialBins':           172,   # 径向 bin 的数量, 等于重建图的尺寸
         'nMash':                 1,     # 合并数 (mash factor)
         'rCrystalDimCm':         2.0,   # 晶体径向尺寸（单位：厘米）
         'xCrystalDimCm':         0.41725, # 晶体横向尺寸（单位：厘米）

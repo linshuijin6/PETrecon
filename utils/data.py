@@ -57,9 +57,10 @@ def add_noise(img, mode='p+g', gauss_mean=0, gauss_std=11):
 
 def load_data(dir_path, name_pre):
     file_path_pre = dir_path + '/' + name_pre
-    file_sinoLD = np.load(file_path_pre + '_sinoHD.npy', allow_pickle=True)
+    file_sinoLD = np.load(file_path_pre + '_sinoLD.npy', allow_pickle=True)
     file_imageHD = np.load(file_path_pre + '_picHD.npy', allow_pickle=True)
-    file_AN = np.load(file_path_pre + '_AN.npy', allow_pickle=True)
+    # file_AN = np.load(file_path_pre + '_AN.npy', allow_pickle=True)
+    file_AN = np.ones_like(file_imageHD)
 
     # X_all = np.expand_dims(np.transpose(file_sinoLD, (0, 1, 2)), -1)
     # Y_all = np.expand_dims(np.transpose(file_imageHD, (0, 1, 2)), -1)

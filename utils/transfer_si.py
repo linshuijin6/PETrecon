@@ -1,8 +1,10 @@
 import time
+from warnings import warn
 
 import numpy as np
 import torch
-from skimage.transform import iradon, radon
+from skimage.transform import iradon, radon, warp
+import torch.nn.functional as F
 
 # radon()
 
@@ -31,9 +33,40 @@ def gaussFilter(img, fwhm, is3d=False, batch_size=1, image_voxelSizeCm=(0.41725 
     return imOut.flatten('F')
 
 
+def s2i(sinodata, geoMatrix, tof=False, psf=0):
+    assert len(sinodata.shape) == 4
+    b, c, sinogram_nRadial, sinogram_nAngular = sinodata.shape
+    assert sinogram_nAngular % 180 == 0
+    dims = [b, sinogram_nRadial, sinogram_nRadial]
+    matrixSize = dims[1:]
+    y = torch.zeros([b, np.prod(matrixSize[:])], dtype=torch.float32, device=sinodata.device)
+    q = sinogram_nAngular // 2
+    # y = np.zeros([b, np.prod(matrixSize[:])], dtype='float')
+
+    for i in range(sinogram_nAngular // 2):
+        for j in range(sinogram_nRadial):
+            M0 = geoMatrix[0][i, j]
+            if not np.isscalar(M0):
+                M = torch.tensor(M0[:, 0:3], dtype=torch.int64, device=sinodata.device)  # 转为 tensor
+                G = torch.tensor(M0[:, 3] / 1e4, dtype=torch.float32, device=sinodata.device)
+                G = G.unsqueeze(0)
+                idx1 = M[:, 0] + M[:, 1] * matrixSize[0]
+                idx2 = M[:, 1] + matrixSize[0] * (matrixSize[0] - 1 - M[:, 0])
+                # 计算 img_subset1 和 img_subset2
+                sino_subset1 = sinodata[:, :, j, i]
+                sino_subset2 = sinodata[:, :, j, i + q]
+
+                # 执行并行计算
+                y[:, idx1] += (sino_subset1 @ G)  # 使用矩阵乘法
+                y[:, idx2] += (sino_subset2 @ G)  # 使用矩阵乘法
+    img = torch.reshape(y, dims)
+
+    return img
+
+
 def i2s(img, AN, geoMatrix, sinogram_nAngular=180, psf=0):
     # img.shape = (batchsize, h, w)
-    img = img.unsqueeze(1)
+    img = img.unsqueeze(1) if len(img.size()) == 3 else img
     img = img.float()
     assert isinstance(img, torch.Tensor)
     sinogram_nRadial = img.shape[2]
@@ -193,9 +226,9 @@ def s2i_batch(radon_image, theta, device_now):
     return out_img
 
 
-def s2i(radon_image, n_theta=None, output_size=None,
-        filter_name="ramp", interpolation="linear", circle=True,
-        preserve_range=True, device='cuda:0'):
+def s2i_radon(radon_image, n_theta=None, output_size=None,
+              filter_name="ramp", interpolation="linear", circle=True,
+              preserve_range=True, device='cuda:0'):
     # recode from skimage.transform.iradon
     import torch
     import numpy as np
@@ -282,7 +315,37 @@ def s2i(radon_image, n_theta=None, output_size=None,
     # iradon()
 
 
-def i2s_radon(image, theta=None, circle=True, preserve_range=False, use_gpu=False):
+def gpu_warp(image, angle):
+    import torch
+    import torch.nn.functional as F
+
+    # 假设 cos_a 和 sin_a 是旋转角度的余弦和正弦值
+    cos_a = torch.cos(angle)
+    sin_a = torch.sin(angle)
+
+    # 获取输入图像的尺寸
+    h, w = image.shape
+    image = image.unsqueeze(0).unsqueeze(0)
+
+    # 定义旋转中心 (center_x, center_y)
+    center_x, center_y = w / 2, h / 2
+
+    # 生成 2x3 的仿射变换矩阵
+    R = torch.tensor([[cos_a, sin_a, 0],
+                      [-sin_a, cos_a, 0]], device=image.device)
+
+    # 扩展维度，以适应 grid_sample 的输入格式
+    R = R.unsqueeze(0)  # 1x2x3
+
+    # 生成仿射网格
+    grid = F.affine_grid(R, size=image.size(), align_corners=False)
+
+    # 进行仿射变换
+    rotated = F.grid_sample(image, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+    return rotated.squeeze(0).squeeze(0)
+
+
+def i2s_radon(image, n_theta=None, circle=True, preserve_range=False, use_gpu=False):
     if image.ndim != 2:
         raise ValueError('The input image must be 2-D')
 
@@ -290,8 +353,7 @@ def i2s_radon(image, theta=None, circle=True, preserve_range=False, use_gpu=Fals
     device = torch.device('cuda' if use_gpu and torch.cuda.is_available() else 'cpu')
 
     # 默认角度范围
-    if theta is None:
-        theta = torch.arange(180, device=device)
+    theta = torch.arange(n_theta, device=device)
 
     # 将图像转换为float类型，保持范围
     image = torch.tensor(image, dtype=torch.float32, device=device)
@@ -327,23 +389,24 @@ def i2s_radon(image, theta=None, circle=True, preserve_range=False, use_gpu=Fals
         pad_before = [nc - oc for oc, nc in zip(old_center, new_center)]
         pad_width = [(pb, p - pb) for pb, p in zip(pad_before, pad)]
 
-        padded_image = torch.nn.functional.pad(image, pad_width, mode='constant', value=0)
+        padded_image = F.pad(image, pad_width, mode='constant', value=0)
 
     # 确保填充后的图像是正方形
     if padded_image.shape[0] != padded_image.shape[1]:
         raise ValueError('padded_image must be a square')
 
     center = padded_image.shape[0] // 2
-    radon_image = torch.zeros((padded_image.shape[0], len(theta)), dtype=padded_image.dtype, device=device)
+    radon_image = torch.zeros((padded_image.shape[0], n_theta), dtype=padded_image.dtype, device=device)
 
     # 计算Radon变换
-    for i, angle in enumerate(torch.deg2rad(theta)):
-        cos_a, sin_a = torch.cos(angle), torch.sin(angle)
-        R = torch.tensor([[cos_a, sin_a, -center * (cos_a + sin_a - 1)],
-                          [-sin_a, cos_a, -center * (cos_a - sin_a - 1)],
-                          [0, 0, 1]], device=device)
-
-        rotated = torch.tensor(warp(padded_image.cpu().numpy(), R.cpu().numpy(), clip=False), device=device)
-        radon_image[:, i] = rotated.sum(0)
+    for i, angle in enumerate(theta):
+        # cos_a, sin_a = torch.cos(angle), torch.sin(angle)
+        # R = torch.tensor([[cos_a, sin_a, -center * (cos_a + sin_a - 1)],
+        #                   [-sin_a, cos_a, -center * (cos_a - sin_a - 1)],
+        #                   [0, 0, 1]], device=device)
+        #
+        # rotated = torch.tensor(warp(padded_image.cpu().numpy(), R.cpu().numpy(), clip=False), device=device)
+        ro = gpu_warp(padded_image, torch.deg2rad(angle))
+        radon_image[:, i] = ro.sum(0)
 
     return radon_image
