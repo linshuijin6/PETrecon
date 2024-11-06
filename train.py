@@ -16,9 +16,10 @@ from model.whole_network import PETReconNet, PETDenoiseNet
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import os
-from model.whole_network import normlazation2one
+from model.whole_network import normalization2one
 # from model.network_swinTrans import SwinIR
 from modelSwinUnet.SUNet import SUNet_model
+import logging
 
 
 def setup(rank, world_size):
@@ -36,13 +37,13 @@ def simulate_geometry(device):
     return PET
 
 
-def main(file_path, n_theta, config):
+def main(logger, file_path, n_theta, config):
     # # 数据
     # setup(rank, world_size)
     # dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
     train_set = DatasetPETRecon(file_path, 'train')
     # train_sampler = DistributedSampler(train_set, shuffle=True, drop_last=True, seed=seed)
-    train_loader = DataLoader(train_set, batch_size=2, shuffle=True)
+    train_loader = DataLoader(train_set, batch_size=8, shuffle=True)
 
     # 模型初始化
     rank = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -66,12 +67,12 @@ def main(file_path, n_theta, config):
         denoise_model.train()
         denoise_model_pre.train()
         running_loss = 0.0
-        for iteration, (inputs, _) in enumerate(train_loader):
+        for iteration, (inputs, Y) in enumerate(train_loader):
             # if (iteration % 10 == 0) and sign:
             time_s = time.time()
             #     sign = not sign
-            x1, x2, AN = inputs
-            x1, x2, AN = x1.to(rank), x2.to(rank), AN.to(rank)
+            x1, x2 = inputs
+            x1, x2 = x1.to(rank), x2.to(rank)
 
             # print(torch.cuda.memory_summary())
 
@@ -94,7 +95,8 @@ def main(file_path, n_theta, config):
             sino_recon_p1 = sino_recon_p1[None, None, :, :] if len(sino_recon_p1.shape) == 2 else sino_recon_p1[:, None, :, :]
             sino_recon_p2 = sino_recon_p2[None, None, :, :] if len(sino_recon_p2.shape) == 2 else sino_recon_p2[:, None, :, :]
             sino_recon_p1_m2, sino_recon_p2_m1 = sino_recon_p1 * mask_p2, sino_recon_p2 * mask_p1
-            sino_recon_p1_m2, sino_recon_p2_m1 = normlazation2one(sino_recon_p1_m2), normlazation2one(sino_recon_p2_m1)
+            sino_recon_p1_m2, sino_recon_p2_m1 = normalization2one(sino_recon_p1_m2), normalization2one(
+                sino_recon_p2_m1)
 
             lsp1, lsp2 = criterion(sino_recon_p1_m2, sino_p2), criterion(sino_recon_p2_m1, sino_p1)
             lspre = criterion(x1_denoised, x2_denoised) + tv_loss(x1_denoised) + tv_loss(x2_denoised)
@@ -107,15 +109,38 @@ def main(file_path, n_theta, config):
             optimizer.step()
 
             running_loss += loss.item()
-            print(f'Epoch {epoch + 1}/{num_epochs}, Iteration {iteration}/{int(np.ceil(len(train_loader)/x1.size(0)))}, Loss: {running_loss:.4f}, Time: {time.time()-time_s:.4f}')
+            logger.info(f'Epoch {epoch + 1}/{num_epochs}, Iteration {iteration}/{int(np.ceil(len(train_loader)/x1.size(0)))}, Loss: {running_loss:.4f}, Time: {time.time()-time_s:.4f}')
 
         epoch_loss = running_loss / len(train_loader.dataset)
-        print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}')
+        logger.info(f'Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}')
 
 
 if __name__ == '__main__':
     n_theta = 180
     recon_size = 128
+    # 配置logging模块
+    log_file_path = './log_file/training_log.txt'
+
+    # 创建一个logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)  # 设置日志级别为INFO
+
+    # 创建一个handler，用于将日志写入文件
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setLevel(logging.INFO)
+
+    # 再创建一个handler，用于将日志输出到控制台
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # 定义日志输出格式
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    # 将两个handler都添加到logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
     # temPath = f'./tmp_{n_theta}_{recon_size}*{recon_size}/'
     # PET = BuildGeometry_v4('mmr', 0)  # scanner mmr, with radial crop factor of 50%
     # PET.loadSystemMatrix(temPath, is3d=False)
@@ -130,4 +155,4 @@ if __name__ == '__main__':
     # os.environ['MASTER_PORT'] = '12345'
     with open('/mnt/data/linshuijin/PETrecon/modelSwinUnet/training.yaml', 'r') as config:
         opt = yaml.safe_load(config)
-    main(path, n_theta, opt)
+    main(logger, path, n_theta, opt)

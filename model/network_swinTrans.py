@@ -576,7 +576,7 @@ class PatchEmbed(nn.Module):
             self.norm = None
 
     def forward(self, x):
-        x = x.flatten(2).transpose(1, 2)  # B Ph*Pw C
+        x = x.flatten(2).transpose(1, 2)  # B,C,Ph,Pw -> B,C,Ph*Pw -> B Ph*Pw C
         if self.norm is not None:
             x = self.norm(x)
         return x
@@ -724,7 +724,7 @@ class SwinIR(nn.Module):
             rgb_mean = (0.4488, 0.4371, 0.4040)
             self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
         else:
-            self.mean = torch.zeros(1, 1, 1, 1)
+            self.mean = torch.ones(1, 1, 1, 1) * 0.5
         self.upscale = upscale  # 1
         self.upsampler = upsampler  # None
         self.window_size = window_size  # 8

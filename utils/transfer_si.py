@@ -64,7 +64,7 @@ def s2i(sinodata, geoMatrix, tof=False, psf=0):
     return img
 
 
-def i2s(img, AN, geoMatrix, sinogram_nAngular=180, psf=0):
+def i2s(img, geoMatrix, sinogram_nAngular=180, psf=0, counts=1e9, randomsFraction=0, NF=1):
     # img.shape = (batchsize, h, w)
     img = img.unsqueeze(1) if len(img.size()) == 3 else img
     img = img.float()
@@ -103,10 +103,29 @@ def i2s(img, AN, geoMatrix, sinogram_nAngular=180, psf=0):
                 y[:, j, i] = (img_subset1 @ G)  # 使用矩阵乘法
                 y[:, j, i + q] = (img_subset2 @ G)  # 使用矩阵乘法
         # print(f'{i}/90', time.time()-time_s)
-    if batch_size == 1:
-        y = y[0, :, :]
-    # print(f'{batch_size} batches forward-projected\n')
-    return y
+    if np.isscalar(counts):
+        counts = counts * torch.ones(batch_size, ).to(img.device)
+
+    truesFraction = 1 - randomsFraction
+    # 添加 Poisson 噪声、散射噪声等，引入计数量控制
+    y_poisson = torch.zeros_like(y).to(img.device)
+    for b in range(batch_size):
+        scale_factor = counts[b] * truesFraction / y[b, :, :].sum()
+        # scale_factor[np.isinf(scale_factor)] = 0
+        # y_poisson[b,:,:] = np.random.poisson(y_att[b,:,:]*scale_factor)/scale_factor # 貌似不太合理，再除以比例后，scale_factor不起作用
+        y_poisson[b, :, :] = torch.poisson(y[b, :, :] * scale_factor).to(img.device)
+        # y_poisson[np.isinf(y_poisson)] = 0
+    Randoms = torch.zeros_like(y).to(img.device)
+    # r_poisson = torch.ones_like(img).to(img.device)
+    r_poisson = torch.ones_like(y).to(img.device)
+    if randomsFraction != 0:
+        for b in range(batch_size):
+            scale_factor_randoms = counts[b] * randomsFraction / r_poisson[b, :, :].sum()
+            r_poisson[b, :, :] = torch.poisson(
+                r_poisson[b, :, :] * scale_factor_randoms) / scale_factor_randoms
+        Randoms = r_poisson
+    prompts = y_poisson * NF + Randoms
+    return prompts
 
 
 def _sinogram_circle_to_square(sinogram, device='cuda'):

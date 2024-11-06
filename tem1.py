@@ -10,7 +10,15 @@ from utils.transfer_si import i2s, s2i, i2s_radon
 
 path = r"E:\dataset_pet\UDPET_Brain\dataset\dataset\train_mat\100_070722_1_20220707_162729_55.mat"
 path2 = r"E:\dataset_pet\UDPET_Brain\dataset\dataset\train_mat\100_070722_1_20220707_162729_34.mat"
-data = np.load('./simulation_angular/angular_180/sino_HD.npy', allow_pickle=True)
+data = np.load('/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/transverse_sinoHD.npy', allow_pickle=True)
+data2 = np.load('/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/transverse_sinoLD.npy', allow_pickle=True)
+plt.imshow(data[0, :, :]), plt.title('HD')
+plt.show()
+plt.imshow(data2[0, :, :]), plt.title('LD')
+plt.show()
+sum1 = data[0, 0, :, :].view(-1).sum()
+sum2 = data2[0, 0, :, :].view(-1).sum()
+
 # data1 = sio.loadmat(path)['img'][:, 128:, :]
 # data2 = sio.loadmat(path2)['img'][:, 128:, :]
 # data = np.concatenate((data1, data2), axis=0)
@@ -34,7 +42,7 @@ geoMatrix = []
 geoMatrix.append(np.load(geoPath, allow_pickle=True))
 
 time_s = time.time()
-sino = i2s(img, 0, geoMatrix, 180)
+sino = i2s(img, geoMatrix, 180)
 plt.imshow(sino[0, :, :].detach().cpu())
 plt.show()
 sino = sino[:, None, :, :]
