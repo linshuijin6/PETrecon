@@ -114,7 +114,7 @@ def train(model_pre, radon, train_loader, criterion, optimizer, rank, epoch, log
         running_loss += loss_cur
         if iteration % 100 == 0:
             logger.info(
-                f'Epoch:{epoch}, Iteration: {iteration}/{len(train_loader)}, Loss: {loss_cur:.4f}, Time/p_i: {time.time() - time_s:.4f}')
+                f'Epoch:{epoch}, Iteration: {iteration}/{len(train_loader)}, a_loss: {loss_cur:.4f}, loss_m: {lossm_cur:.4f}, loss_i: {lossi_cur:.4f}, Time/p_i: {time.time() - time_s:.4f}')
 
             # 定义图像数据和标题
             pics = [x1, x2, x1_denoised, aver_x, picLD, mid_recon, s_in_1, s_in_2, s_out_1, s_out_2,
@@ -141,7 +141,7 @@ def train(model_pre, radon, train_loader, criterion, optimizer, rank, epoch, log
                 ax.spines['right'].set_visible(False)  # 隐藏右侧边框
             # 设置大标题
             fig.suptitle(
-                f'Epoch:{epoch}, Iteration: {iteration}, a_loss: {loss_cur:.4f}, loss_m: {lossm_cur:.4f}, loss_i: {lossi_cur:.4f} seed: {seed}',
+                f'Epoch:{epoch}, Iteration: {iteration}, a_loss: {loss_cur:.4f}, loss_m: {lossm_cur:.4f}, loss_i: {lossi_cur:.4f}, seed: {seed}',
                 fontsize=14)
             # 调整布局，避免重叠
 
@@ -364,7 +364,7 @@ def main(logger, args, config, log_writer):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PET reconstruction demo')
     parser.add_argument('--n_theta', default=180, type=int, help='number of theta')
-    parser.add_argument('--bs', default=2, type=int, help='batch_size')
+    parser.add_argument('--bs', default=4, type=int, help='batch_size')
     parser.add_argument('--root_path', default='./simulation_angular/', type=str,
                         help='Input images')
     parser.add_argument('--lr', default=2e-5, type=float, help='learning rate')
@@ -380,13 +380,13 @@ if __name__ == '__main__':
     parser.add_argument('--mode', default='none', type=str, help='mode of noise')
     parser.add_argument('--scale_factor', default=0.5, type=float, help='counts level for poisson noise, HD*0.5=LD')
     parser.add_argument('--aod', default=True, type=bool, help='patch of the angular or distance, the former by default')
-    parser.add_argument('--CUDA_VISIBLE_DEVICES', default='2', type=str, help='number of CUDA_VISIBLE_DEVICES')
+    parser.add_argument('--CUDA_VISIBLE_DEVICES', default='1', type=str, help='number of CUDA_VISIBLE_DEVICES')
     parser.add_argument('--opt_path', default='./modelSwinUnet/training.yaml', type=str,
                         help='path of SwinUnet preset file')
     parser.add_argument('--loss', default='L1', type=str, help='loss mode, L1 or L2')
     parser.add_argument('--show_tr', default=True, type=bool, help='whether to show results')
     parser.add_argument('--show_val', default=True, type=bool, help='whether to show results')
-    parser.add_argument('--checkpoints', default=False, type=bool, help='whether to continue the last training')
+    parser.add_argument('--checkpoints', default=True, type=bool, help='whether to continue the last training')
     parser.add_argument('--test', default=False, type=bool, help='only for test or not')
 
     args = parser.parse_args()
