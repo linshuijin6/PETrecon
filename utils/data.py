@@ -1,8 +1,38 @@
+import os
+import sys
+
 import numpy as np
 import torch
 import torch.utils.data as data
-from recon_astraFBP import sino2pic as s2p
+import matplotlib.pyplot as plt
 
+
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.', '/')))
+# from radon import Radon
+# from normalize import normalization2one
+
+
+# from recon_astraFBP import sino2pic as s2p
+
+
+
+def normalization2one(input_tensor: torch.Tensor or np.ndarray) -> torch.Tensor:
+    # 假设输入的 tensor 形状为 (batchsize, channels=1, h, w) 或 numpy 形状为 (batchsize, h, w)
+    # input_tensor = torch.randn(4, 1, 64, 64)  # 示例的输入张量
+    input_tensor = torch.from_numpy(input_tensor).to('cuda').unsqueeze(1).float() if (isinstance(input_tensor, np.ndarray) and len(input_tensor.size())==3) else input_tensor
+
+    # 为了每个 batch 归一化，我们要按batch维度进行最小值和最大值的计算
+    # 计算每个batch的最小值和最大值，保持维度为 (batchsize, 1, 1, 1)
+    min_val = input_tensor.reshape(input_tensor.size(0), -1).min(dim=1)[0].reshape(-1, 1, 1, 1)
+    max_val = input_tensor.reshape(input_tensor.size(0), -1).max(dim=1)[0].reshape(-1, 1, 1, 1)
+
+    # 进行归一化，将所有数值归一化到 [0, 1] 区间
+    normalized_tensor = (input_tensor - min_val) / (max_val - min_val + 1e-8)  # 1e-8 防止除以0
+    assert input_tensor.shape == normalized_tensor.shape
+    # normalized_tensor = normalized_tensor * 1.0 - 0.5
+
+    return normalized_tensor  # 确认输出形状 (batchsize, 1, h, w)
 
 def tv_loss(img):
     # 假设 img 的形状为 (batch_size, channel=1, height, width)
@@ -54,19 +84,64 @@ def set_random_pixels_to_zero(data, ratio):
 
 
 # 加噪声函数（适用于 PyTorch tensor）
-def add_noise(img, radon, ratio):
+def add_noise(radon, img=None, sino=None, ratio=0.2, mode='none', scale_factor=0.5):
     """
     img: 输入的图像张量，假设值在 [0, 1] 范围内，形状为 [batch_size, channels, height, width]
     mode: 噪声类型 'poisson+gaussian' 或 'gaussian'
     gauss_mean: 高斯噪声的均值
     gauss_std: 高斯噪声的标准差
     """
-    img = img.to(radon.device).float()
-    img = img[:, None, :, :] if len(img.shape)==3 else img
-    noisy_image = img.clone()
-    noisy_image = set_random_pixels_to_zero(noisy_image, ratio)
-    noisy_sino = radon(noisy_image.to(img.device))
-    return noisy_sino.squeeze(1).cpu()
+    if mode == 'none':
+        img = img.to(radon.device).float()
+        img = img[:, None, :, :] if len(img.shape)==3 else img
+        noisy_image = img.clone()
+        noisy_image = set_random_pixels_to_zero(noisy_image, ratio)
+        # plt.imshow(noisy_image[0, 0, :, :].cpu().squeeze().numpy()), plt.show()
+        out_sino = normalization2one(radon(noisy_image.to(img.device))) - ratio*normalization2one(sino.to(img.device))
+        return out_sino.squeeze(1)
+    elif mode == 'poisson':
+        sino = sino[:, None, :, :] if len(sino.shape) == 3 else sino
+        t_sino = sino.clone()
+        """
+            对 PET 弦图数据添加泊松噪声。
+
+            参数:
+                sino (torch.Tensor): 输入的弦图数据，维度为 (batchsize, c, h, w)。
+                scale_factor (float): 噪声控制因子。增大此值可以降低噪声的相对强度，减小此值可以提高噪声的相对强度。
+                UDPET的数据中，LD的counts为8e4，HD的counts为15e4，约为两倍，于是设置scale_factor=0.5。
+
+            返回:
+                noisy_sino (torch.Tensor): 添加了泊松噪声的弦图数据。
+            """
+        # 将输入数据进行缩放
+        inpu_sum = t_sino.view(-1).sum()/sino.size(0)
+        inpu_level = [t_sino.view(-1).min(), t_sino.view(-1).max()]
+        print(f'input sum: {inpu_sum}, input level: {inpu_level}')
+
+        scaled_sino = t_sino * scale_factor
+
+        # 转换为泊松分布所需的整数格式
+        # 由于泊松分布只接受整数，确保数据非负
+        scaled_sino = torch.clamp(scaled_sino, min=0)
+
+        # 添加泊松噪声
+        noised_sino = torch.poisson(scaled_sino)
+
+        # 将数据缩放回原来的范围
+        # noised_sino = noised_sino / scale_factor
+        out_sum = noised_sino.view(-1).sum() / sino.size(0)
+        out_level = [noised_sino.view(-1).min(), noised_sino.view(-1).max()]
+        print(f'output sum: {out_sum}, output level: {out_level}')
+
+        return noised_sino.squeeze(1).cpu()
+        # for b in range(batch_size):
+        #     scale_factor_randoms = scale_factor / noisy_sino[b, 0, :, :].sum()
+        #     noisy_sino[b, 0, :, :] = torch.poisson(noisy_sino[b, 0, :, :] * scale_factor_randoms) + noisy_sino[b, 0, :, :]
+        #
+        # # noisy_sino = torch.poisson(noisy_image * scale_factor) / scale_factor  # 归一化回 [0, 1]
+        # return noisy_sino.squeeze(1).cpu()
+
+
     #
     #
     # if mode == 'p+g':
@@ -93,6 +168,7 @@ def add_noise(img, radon, ratio):
 
 def load_data(dir_path, name_pre):
     file_path_pre = dir_path + '/' + name_pre
+    # file_path_pre = dir_path + '/' + name_pre
     file_sinoLD = np.load(file_path_pre + '_sinoLD.npy', allow_pickle=True)
     file_sinoHD = np.load(file_path_pre + '_sinoHD.npy', allow_pickle=True)
     file_imageLD = np.load(file_path_pre + '_picLD.npy', allow_pickle=True)
@@ -144,18 +220,22 @@ def generate_mask(dimensions, sigma, column=True):
 
 
 class DatasetPETRecon(data.Dataset):
-    def __init__(self, file_path, radon, ratio):
+    def __init__(self, file_path, radon, ratio, mode, name_pre='transverse', scale_factor=0.5):
         super().__init__()
         self.file_path = file_path
         self.radon = radon
         self.ratio = ratio
-        self.x1_noisy, self.x2_noisy, self.Y_train, self.sino_label = self.prep_data()
+        self.name_pre = name_pre
+        self.mode = mode
+        self.scale_factor = scale_factor
+        self.x1_noisy, self.x2_noisy, self.Y_train, self.sino_label, self.picLD_train = self.prep_data()
 
     def __getitem__(self, index):
         x1 = self.x1_noisy[index, :, :, :]
         x2 = self.x2_noisy[index, :, :, :]
         Y = self.Y_train[index, :, :, :]
         sino_label = self.sino_label[index, :, :]
+        picLD_train = self.picLD_train[index, :, :, :]
         X = (x1, x2)
         # elif self.phase == 'test':
         #     X = self.X_test
@@ -163,7 +243,7 @@ class DatasetPETRecon(data.Dataset):
         # elif self.phase == 'val':
         #     X = self.X_val
         #     Y = self.Y_val
-        return X, Y, sino_label
+        return X, Y, sino_label, picLD_train
 
     def __len__(self):
         return self.Y_train.shape[0]
@@ -171,17 +251,100 @@ class DatasetPETRecon(data.Dataset):
     def prep_data(self):
         file_path = self.file_path
         # 数据
-        name_pre = 'transverse'
+        name_pre = self.name_pre
         # X, sinogram; Y, pic
         X_train, Y_train, picLD_train, sino_label = load_data(file_path, name_pre)
         X_train, Y_train, picLD_train = torch.from_numpy(X_train), torch.from_numpy(Y_train), torch.from_numpy(picLD_train)
         # X_train_noisy1, X_train_noisy2 = add_noise(X_train, mode='g'), add_noise(X_train, mode='g')
         Y_train = Y_train.squeeze() if X_train.shape[0] != 1 else Y_train
+        # picLD_train = picLD_train[:, None, :, :] if picLD_train.shape[1] != 1 else picLD_train
         # gau_std = torch.std(X_train).item()*0.1
-        X_train_noisy1, X_train_noisy2 = add_noise(picLD_train, self.radon, self.ratio), X_train  # noise2noise策略
-        X_train_noisy1 = torch.unsqueeze(X_train_noisy1, 1)
-        X_train_noisy2 = torch.unsqueeze(X_train_noisy2, 1)
-        Y_train = torch.unsqueeze(Y_train, 1)
+        # X_train_noisy1, X_train_noisy2 = add_noise(picLD_train, self.radon, self.ratio, mode='poisson', scale_factor=8e4), X_train  # noise2noise策略
+        X_train_noisy1, X_train_noisy2 = add_noise(self.radon, img=picLD_train, sino=X_train, ratio=self.ratio, mode=self.mode, scale_factor=self.scale_factor), X_train  # noise2noise策略
+        X_train_noisy1 = torch.unsqueeze(X_train_noisy1, 1) if len(X_train_noisy1.shape) == 3 else X_train_noisy1
+        X_train_noisy2 = torch.unsqueeze(X_train_noisy2, 1) if len(X_train_noisy2.shape) == 3 else X_train_noisy2
+        Y_train = torch.unsqueeze(Y_train, 1) if len(Y_train.shape) == 3 else Y_train
 
-        return X_train_noisy1, X_train_noisy2, Y_train, sino_label
+        return X_train_noisy1, X_train_noisy2, Y_train, sino_label, picLD_train
+
+    def get_all_in(self):
+        return self.x2_noisy, self.Y_train
+
+
+if __name__ == '__main__':
+    # 测试
+    from radon import Radon
+    # 加载数据
+    root1_path = '/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_picLD.npy'
+    root2_path = '/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_picHD.npy'
+    root_path = '/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_sinoLD.npy'
+    root3_path = '/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_sinoHD.npy'
+    file = np.load(root1_path, allow_pickle=True)[:4, :, :, :]
+    file1 = np.load(root_path, allow_pickle=True)[:4, :, :]
+    sino_HD = np.load(root3_path, allow_pickle=True)[:4, :, :]
+    pic_HD = np.load(root2_path, allow_pickle=True)[:4, :, :, :]
+    # bs = file.shape[0]
+    # ave = file.reshape(bs, -1)
+    # sum_l = ave.sum(axis=1)
+    # a = sum_l.mean()
+    device = 'cuda:2'
+    picLD = torch.from_numpy(file).float().to(device)
+    sinoLD = torch.from_numpy(file1).float().to(device).unsqueeze(1)
+    picHD = torch.from_numpy(pic_HD).float().to(device)
+    sinoHD = torch.from_numpy(sino_HD).float().to(device).unsqueeze(1)
+    radon = Radon(n_theta=180, circle=True, device=device)
+    plt.imshow(picHD[0, 0, :, :].cpu().numpy()), plt.title(f'pic_HD'), plt.show()
+    plt.imshow(picLD[0, 0, :, :].cpu().numpy()), plt.title(f'pic_LD'), plt.show()
+    for _ in range(10):
+        dif_x = []
+        dif_y = []
+        min_v = 1
+        r_m = 0.1
+        for i in range(5, 10, 1):
+            scale_factor = i/10
+            sino_low = add_noise(radon, img=picLD, sino=sinoHD, ratio=0.4, mode='poisson', scale_factor=scale_factor)
+
+            sino_low = sino_low.unsqueeze(1).to(device)
+            plt.imshow(sino_low[0, 0, :, :].cpu().numpy()), plt.title(f'sino_low， scale_factor = {scale_factor}'), plt.show()
+            pic_low = radon.filter_backprojection(sino_low)
+            plt.imshow(pic_low[0, 0, :, :].cpu().numpy()), plt.title(f'scale_factor = {scale_factor}'), plt.show()
+            dif_value = torch.nn.MSELoss()(normalization2one(pic_low), normalization2one(picLD)).item()
+            dif_y.append(dif_value)
+            # print(f'ratio={ratio}, dif={dif_value}')
+            if dif_value < min_v:
+                min_v = dif_value
+                r_m = scale_factor
+        print(f'scale_factor={r_m}, min_dif={min_v}')
+        1
+
+
+
+
+    # data = add_noise(radon, sino=file1, mode='poisson', scale_factor=1e4, ratio=0.4).unsqueeze(1).to('cuda:2')
+    # data1, _ = add_noise(radon, img=file, sino=file1, mode='none', scale_factor=1e4, ratio=0.4)
+    # data1 = data1.unsqueeze(1).to('cuda:2')
+    # data2, noisy_pic = add_noise(radon, img=file2, sino=file3, mode='none', scale_factor=1e4, ratio=0.05)
+    # data2 = data2.unsqueeze(1).to('cuda:2')
+    # noisy_pic = noisy_pic.squeeze().to('cuda:2')
+    # recon = radon.filter_backprojection(data).cpu().squeeze().numpy()
+    # # data1 = normalization2one(data1) - 0.2*normalization2one(file1)
+    # recon_1 = radon.filter_backprojection(data1).cpu().squeeze().numpy()
+    # data = data.cpu().squeeze().numpy()
+    # data1 = data1.cpu().squeeze().numpy()
+    # data2 = data2.cpu().squeeze().numpy()
+    # file = file.cpu().squeeze().numpy()
+    # file1 = file1.cpu().squeeze().numpy()
+    # noisy_pic = noisy_pic.cpu().squeeze().numpy()
+    # # plt.imshow(data[0, :, :]), plt.show()
+    # plt.imshow(data2[0, :, :]), plt.title('none_HD'), plt.show()
+    # plt.imshow(file1[0, :, :]), plt.title('sino_LD'), plt.show()
+    # plt.imshow(file[0, :, :]), plt.title('pic_LD'), plt.show()
+    # # plt.imshow(recon[0, :, :]), plt.show()
+    # # plt.imshow(recon_1[0, :, :]), plt.show()
+    # plt.imshow(file1[0, :, :]-data2[0, :, :], cmap='gray'), plt.show()
+    # plt.imshow(file[0, :, :]-noisy_pic[0, :, :], cmap='gray'), plt.show()
+    # plt.imshow(pic_HD[0, :, :]), plt.show()
+    # plt.imshow(sino_HD[0, :, :]), plt.show()
+
+
 

@@ -2,12 +2,13 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt
 
-from radon import Radon
+# from radon import Radon
 
 
-def normalization2one(input_tensor):
-    # 假设输入的 tensor 形状为 (batchsize, channels=1, h, w)
+def normalization2one(input_tensor: torch.Tensor or np.ndarray) -> torch.Tensor:
+    # 假设输入的 tensor 形状为 (batchsize, channels=1, h, w) 或 numpy 形状为 (batchsize, h, w)
     # input_tensor = torch.randn(4, 1, 64, 64)  # 示例的输入张量
+    input_tensor = torch.from_numpy(input_tensor).to('cuda').unsqueeze(1).float() if isinstance(input_tensor, np.ndarray) else input_tensor
 
     # 为了每个 batch 归一化，我们要按batch维度进行最小值和最大值的计算
     # 计算每个batch的最小值和最大值，保持维度为 (batchsize, 1, 1, 1)
@@ -78,7 +79,7 @@ if __name__ == "__main__":
 
     # 示例数据 (batch_size, channels, height, width)
     # data = torch.rand(2, 3, 4, 4)  # 2个样本，3个通道，4x4图像
-    data_n = np.load('/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_sinoHD.npy', allow_pickle=True)
+    data_n = np.load('../simulation_angular/angular_180/test_transverse_sinoHD.npy', allow_pickle=True)
     xlim = (data_n.reshape(-1).min()-1, data_n.reshape(-1).max()+1)
     data = torch.from_numpy(data_n).to('cuda').float().unsqueeze(1)
 
@@ -97,8 +98,8 @@ if __name__ == "__main__":
     plt.figure(figsize=(12, 8))
     plot_data(data, "Original Data", 1, color_me, xlim)
     plot_data(min_max_normalized, "Min-Max Normalized", 2, color_me, xlim)
-    plot_data(rms_normalized, "RMS Normalized", 3, color_me, xlim)
-    plot_data(log_normalized, "Log Normalized", 4, color_me, xlim)
+    # plot_data(rms_normalized, "RMS Normalized", 3, color_me, xlim)
+    # plot_data(log_normalized, "Log Normalized", 4, color_me, xlim)
     plt.show()
 
     # 绘制图像

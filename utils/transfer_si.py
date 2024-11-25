@@ -3,7 +3,7 @@ from warnings import warn
 
 import numpy as np
 import torch
-from skimage.transform import iradon, radon, warp
+# from skimage.transform import iradon, radon, warp
 import torch.nn.functional as F
 
 # radon()

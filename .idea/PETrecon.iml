@@ -2,7 +2,7 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$" />
-    <orderEntry type="jdk" jdkName="Remote Python 3.8.19 (sftp://linshuijin@10.181.8.117:3001/mnt/data/linshuijin/.conda/envs/torchpy38/bin/python) (2)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="lsjpy38" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

@@ -3,7 +3,7 @@ import numpy as np
 from itertools import product
 
 
-def process_excel_data(path, path1):
+def process_excel_data(path, path1, n_per_column=6, n_per_row=2):
     # 读取原始Excel文件
     df = pd.read_excel(path, header=None)
 
@@ -14,7 +14,7 @@ def process_excel_data(path, path1):
     i = 0
     while i < len(df):
         # 提取6行数据
-        group = df.iloc[i:i + 6, :2].values
+        group = df.iloc[i:i + n_per_column, :n_per_row].values
 
         # 检查是否是空行，若空行则跳过
         if np.isnan(group).all():
@@ -25,7 +25,7 @@ def process_excel_data(path, path1):
         min_variance = float('inf')
         best_combination = None
 
-        for combination in product([0, 1], repeat=6):
+        for combination in product(list(range(n_per_row)), repeat=n_per_column):
             # 根据组合选择数据
             selected_values = [group[row][col] for row, col in enumerate(combination)]
 
@@ -37,18 +37,20 @@ def process_excel_data(path, path1):
                 min_variance = variance
                 best_combination = selected_values
 
-        tm1 = np.var(group[:, 0])
-        tm2 = np.var(group[:, 1])
-        tm3 = np.var(best_combination)
+        var_list = []
+        for x in range(n_per_row):
+            tm_value = np.var(group[:, x])
+            var_list.append(tm_value)
+        var_list.append(np.var(best_combination))
 
         # 保存最小方差组合
         results.append({
             "combination": best_combination,
-            "variances": [tm1, tm2, tm3]
+            "variances": var_list
         })
 
         # 跳到下一个组
-        i += 7  # 每组6行+1行空行
+        i += n_per_column + 1  # 每组6行+1行空行
 
     # 构建新数据框，包含原始数据及处理后的结果
     new_df = df.copy()
@@ -59,13 +61,13 @@ def process_excel_data(path, path1):
 
     # 遍历每组，将结果合并
     for idx, result in enumerate(results):
-        start_idx = idx * 7
+        start_idx = idx * (n_per_column+1)
 
         # 添加方差最小组合的6行数据
         combination_column.extend(result["combination"] + [None])
 
         # 设置每列方差到新表格的第四列的前三行
-        if start_idx + 3 < len(df):
+        if start_idx + n_per_row + 1 < len(df):
             for j, var in enumerate(result["variances"]):
                 variance_columns[start_idx + j] = var
 
@@ -80,6 +82,6 @@ def process_excel_data(path, path1):
 
 
 # 使用示例
-path = r"D:\2Z.xlsx"
-path1 = r"D:\2Z1.xlsx"
-process_excel_data(path, path1)
+path = r"D:\41.xlsx"  # 输入文件的路径，注意每两组数据间需要有且只有一个空行
+path1 = r"D:\42.xlsx"  # 输出文件的保存路径
+process_excel_data(path, path1, n_per_row=2, n_per_column=5)  # n_per_row为每组数据的列数，n_per_column为每组数据的行数

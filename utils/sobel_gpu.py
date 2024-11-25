@@ -38,7 +38,7 @@ def sobel(img_torch):
 
 if __name__ == "__main__":
     # 假设我们有一个形状为 (batch_size, channels, height, width) 的图像张量
-    img = np.load('/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_sinoHD.npy',
+    img = np.load('../simulation_angular/angular_180/test_transverse_sinoHD.npy',
                   allow_pickle=True)
     img_torch = torch.from_numpy(img).to('cuda').unsqueeze(1).float()  # 假设图像在[0, 1]范围内
     min_val = img_torch.amin(dim=(2, 3), keepdim=True)  # shape: (batch_size, channels, 1, 1)

@@ -3,6 +3,68 @@ import torch
 # from utils import fourier_filter, get_pad_width
 
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
+
+from model.network_swinTrans import SwinIR
+
+
+def fourier_filter(name, size, device="cpu"):
+    n = torch.cat((torch.arange(1, size / 2 + 1, 2, dtype=int), torch.arange(size / 2 - 1, 0, -2, dtype=int)))
+    f = torch.zeros(size)
+    f[0] = 0.25
+    pi = torch.deg2rad(torch.tensor(180.0))
+    f[1::2] = -1 / (pi * n) ** 2
+    fourier_filter = 2 * torch.real(torch.fft.fft(f))
+
+    if name == "ramp":
+        pass
+    elif name == "shepp_logan":
+        omega = torch.pi * torch.fft.fftfreq(size)[1:]
+        fourier_filter[1:] *= torch.sin(omega) / omega
+
+    elif name == "cosine":
+        freq = torch.linspace(0, torch.pi - (torch.pi / size), size)
+        cosine_filter = torch.fft.fftshift(torch.sin(freq))
+        fourier_filter *= cosine_filter
+
+    elif name == "hamming":
+        fourier_filter *= torch.fft.fftshift(torch.hamming_window(size, periodic=False))
+
+    elif name == "hann":
+        fourier_filter *= torch.fft.fftshift(torch.hann_window(size, periodic=False))
+    else:
+        print(f"[TorchRadon] Error, unknown filter type '{name}', available filters are: 'ramp', 'shepp_logan', 'cosine', 'hamming', 'hann'")
+
+    filter = fourier_filter.to(device)
+
+    return filter
+
+
+def get_pad_width(image_size):
+    """
+    Pads the input image to make it square and centered, with non-zero elements in the middle.
+
+    Args:
+        image (torch.Tensor): Input image tensor of shape (batch_size, 1, W, W)
+
+    Returns:
+        padded_image (torch.Tensor): Padded image tensor
+        pad_width (list): Amount of padding applied to each dimension
+    """
+
+    # Compute diagonal and padding sizes
+    diagonal = (2**0.5) * image_size
+    pad = [int(torch.ceil(torch.tensor(diagonal - s))) for s in (image_size, image_size)]
+
+    # Compute new and old centers
+    new_center = [(s + p) // 2 for s, p in zip((image_size, image_size), pad)]
+    old_center = [s // 2 for s in (image_size, image_size)]
+
+    # Compute padding before and after
+    pad_before = [nc - oc for oc, nc in zip(old_center, new_center)]
+    pad_width = tuple((pb, p - pb) for pb, p in zip(pad_before, pad))
+
+    return pad_width
 
 
 class Radon(torch.nn.Module):
@@ -134,3 +196,36 @@ class Radon(torch.nn.Module):
             reconstructed = reconstructed[:, :, start_idx:end_idx, start_idx:end_idx]
 
         return reconstructed
+
+
+if __name__ == '__main__':
+    device = 'cuda:1'
+    me_radon = Radon(n_theta=180, circle=True, device=device)
+    data_n = np.load('./simulation_angular/angular_180/test_transverse_sinoLD.npy', allow_pickle=True)
+    data_1n = np.load('./simulation_angular/angular_180/test_transverse_picHD.npy', allow_pickle=True)
+    with torch.no_grad():
+        sinoLD = torch.from_numpy(data_n).float().squeeze().unsqueeze(1).to(device)[:3, :, :, :]
+        picHD = torch.from_numpy(data_1n).float().squeeze().unsqueeze(1).to(device)[:3, :, :, :]
+        denoise_model_pre = SwinIR(upscale=1,
+                                   in_chans=1,
+                                   img_size=[128, 180],
+                                   window_size=4,
+                                   patch_size=[1, 45],
+                                   img_range=1.0,
+                                   depths=[2, 6, 2],
+                                   embed_dim=180,
+                                   num_heads=[3, 6, 12],
+                                   mlp_ratio=2.0,
+                                   upsampler='',
+                                   resi_connection='1conv', ).to(device)
+        denoise_model_pre.load_state_dict(torch.load('/home/ssddata/linshuijin/PETrecon/model/denoise_pre_weight_best.pth'))
+        out_sino1 = denoise_model_pre(sinoLD)
+        pic_1 = me_radon.filter_backprojection(sinoLD)
+        out_sino2 = denoise_model_pre(out_sino1)
+        pic_2 = me_radon.filter_backprojection(out_sino2)
+
+    plt.imshow(pic_1[0, 0, :, :].cpu().numpy()), plt.show()
+    plt.imshow(pic_2[0, 0, :, :].cpu().numpy()), plt.show()
+    plt.imshow(picHD[0, 0, :, :].cpu().numpy()), plt.show()
+
+

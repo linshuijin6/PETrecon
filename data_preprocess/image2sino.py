@@ -7,22 +7,22 @@ import scipy.io as sio
 from utils import Radon
 from utils.transfer_si import i2s
 import matplotlib.pyplot as plt
-from skimage.transform import iradon, radon, warp
+# from skimage.transform import iradon, radon, warp
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # for UDPET-brain
-path_root = "/mnt/data/linshuijin/data_PET/data_UDPET_brain/test"
+path_root = "/home/ssddata/linshuijin/data/UDPET_Brain/train_mat"
 file_names = os.listdir(path_root)
 ldSinos = []
 hdSinos = []
 ldImgs = []
 hdImgs = []
 k = 0
-n = 10000
-temPath = '/mnt/data/linshuijin/PETrecon/tmp_180_128*128/'
-geoMatrix = []
-geoMatrix.append(np.load(temPath + 'geoMatrix-0.npy', allow_pickle=True))
+n = 10000000
+# temPath = '/mnt/data/linshuijin/PETrecon/tmp_180_128*128/'
+# geoMatrix = []
+# geoMatrix.append(np.load(temPath + 'geoMatrix-0.npy', allow_pickle=True))
 for i, file_name in enumerate(file_names):
     file_path = os.path.join(path_root, file_name)
     raw_data = sio.loadmat(file_path)['img']
@@ -135,10 +135,10 @@ hdSino_np = hdSinos.squeeze(1).cpu().numpy()
 # hdSino_np = hdSinos.cpu().numpy()
 # plt.imshow(hdSino_np[0, :, :]), plt.show()
 # np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_sinoHD.npy', hdSino_np)
-np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180_test/transverse_sinoLD.npy', ldSino_np)
-np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180_test/transverse_sinoHD.npy', hdSino_np)
-np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180_test/transverse_picHD.npy', hdimg_np)
-np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180_test/transverse_picLD.npy', ldimg_np)
+np.save(f'/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/transverse_sinoLD.npy', ldSino_np)
+np.save(f'/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/transverse_sinoHD.npy', hdSino_np)
+np.save(f'/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/transverse_picHD.npy', hdimg_np)
+np.save(f'/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/transverse_picLD.npy', ldimg_np)
 # np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/transverse_p{k+1}_4_sinoLD.npy', ldSino_np)
 # np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/transverse_p{k+1}_4_sinoHD.npy', hdSino_np)
 # np.save(f'/mnt/data/linshuijin/PETrecon/simulation_angular/angular_180/transverse_p{k+1}_4_picLD.npy', ldImgs)

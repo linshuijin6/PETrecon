@@ -4,9 +4,20 @@ import numpy as np
 import scipy.io as sio
 import torch
 from matplotlib import pyplot as plt
-from skimage.transform import iradon, radon
+# from skimage.transform import iradon, radon
 from geometry.BuildGeometry_v4 import BuildGeometry_v4
 from utils.transfer_si import i2s, s2i, i2s_radon
+
+
+import numpy as np
+
+file_path = '/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/transverse_picHD.npy'
+
+# Load the data without reshaping
+data = np.load(file_path, mmap_mode='r')
+
+# Print the shape of the loaded data
+print("Loaded data shape:", data.shape)
 
 path = r"E:\dataset_pet\UDPET_Brain\dataset\dataset\train_mat\100_070722_1_20220707_162729_55.mat"
 path2 = r"E:\dataset_pet\UDPET_Brain\dataset\dataset\train_mat\100_070722_1_20220707_162729_34.mat"
