@@ -7,6 +7,8 @@ PET image reconstruction library
 abolfazl.mehranian@kcl.ac.uk
 
 """
+import time
+
 import torch
 
 mct = {'model_number':          1104,
@@ -39,7 +41,7 @@ mmr = {
         'circularGantry':        1,     # 圆形扫描架 (1 表示是圆形的)
         'nBuckets':              224,   # 探测桶的数量
         'nBlockRings':           8,     # 探测器块环的数量
-        'nBlockPerRing':         80,    # 每环探测器的单元数量，原56；等于80时，角度数为360，等于40时，角度数为180；
+        'nBlockPerRing':         40,    # 每环探测器的单元数量，原56；等于80时，角度数为360，等于40时，角度数为180；
         'nPhysCrystalsPerBlock': 8,     # 每单元块的物理晶体数量
         'useVirtualCrystal':     1,     # 是否使用虚拟晶体 (1 表示使用)
         # 每个环下的晶体数量为：单元块数量*每单元的晶体数 = 56*（8+1）
@@ -1482,8 +1484,11 @@ class BuildGeometry_v4:
 
         img = img*AF
         img = img[:, np.newaxis, :, :]
+        time_s = time.time()
 
         y = projector(torch.from_numpy(img))
+        time_c = time.time() - time_s
+        print(time_c)
         y_att = y
         y_att[np.isinf(y_att)] = 0
         y_att[y_att < 0] = 0

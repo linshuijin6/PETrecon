@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="gpulinpy310" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="torchpy38 (3)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="lsjpy38" project-jdk-type="Python SDK" />
 </project>

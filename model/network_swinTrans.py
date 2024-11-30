@@ -11,11 +11,30 @@ https://github.com/microsoft/Swin-Transformer
 '''
 
 import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+
+def normalization2one(input_tensor: torch.Tensor or np.ndarray) -> torch.Tensor:
+    # 假设输入的 tensor 形状为 (batchsize, channels=1, h, w) 或 numpy 形状为 (batchsize, h, w)
+    # input_tensor = torch.randn(4, 1, 64, 64)  # 示例的输入张量
+    input_tensor = torch.from_numpy(input_tensor).to('cuda').unsqueeze(1).float() if isinstance(input_tensor, np.ndarray) else input_tensor
+
+    # 为了每个 batch 归一化，我们要按batch维度进行最小值和最大值的计算
+    # 计算每个batch的最小值和最大值，保持维度为 (batchsize, 1, 1, 1)
+    min_val = input_tensor.reshape(input_tensor.size(0), -1).min(dim=1)[0].reshape(-1, 1, 1, 1)
+    max_val = input_tensor.reshape(input_tensor.size(0), -1).max(dim=1)[0].reshape(-1, 1, 1, 1)
+
+    # 进行归一化，将所有数值归一化到 [0, 1] 区间
+    normalized_tensor = (input_tensor - min_val) / (max_val - min_val + 1e-8)  # 1e-8 防止除以0
+    assert input_tensor.shape == normalized_tensor.shape
+    # normalized_tensor = normalized_tensor * 1.0 - 0.5
+
+    return normalized_tensor  # 确认输出形状 (batchsize, 1, h, w)
+
 
 '''
 Multilayer Perceptron
@@ -39,7 +58,7 @@ class Mlp(nn.Module):
         return x
 
 
-def window_partition(x, window_size):
+def window_partition(x, window_size, input_resolution):
     """
     Args:
         x: (B, H, W, C)
@@ -48,9 +67,11 @@ def window_partition(x, window_size):
     Returns:
         windows: (num_windows*B, window_size, window_size, C)
     """
+    window_size_plus = 1
+    window_size = [window_size_plus, window_size] if input_resolution[1] < 128 else [window_size, window_size_plus]
     B, H, W, C = x.shape
-    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+    x = x.view(B, H // window_size[0], window_size[0], W // window_size[1], window_size[1], C)
+    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size[0], window_size[1], C)
     return windows
 
 
@@ -65,8 +86,8 @@ def window_reverse(windows, window_size, H, W):
     Returns:
         x: (B, H, W, C)
     """
-    B = int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
+    B = int(windows.shape[0] / (H * W / 1 / window_size))
+    x = windows.view(B, H // 1, W // window_size, 1, window_size, -1) if W // window_size else windows.view(B, H // window_size, W // 1, window_size, 1, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
@@ -85,18 +106,18 @@ class WindowAttention(nn.Module):
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
 
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., input_size=(1, 45)):
 
         super().__init__()
         self.dim = dim
-        self.window_size = window_size  # Wh, Ww
+        self.window_size = [1, window_size] if input_size[1]<128 else [window_size, 1] # Wh, Ww
         self.num_heads = num_heads  # number of head 6
         head_dim = dim // num_heads  # head_dim: 180//6=30
         self.scale = qk_scale or head_dim ** -0.5
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+            torch.zeros((2 * self.window_size[0] - 1) * (2 * self.window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
         # get pair-wise relative position index for each token inside the window
         coords_h = torch.arange(self.window_size[0])
@@ -210,18 +231,19 @@ class SwinTransformerBlock(nn.Module):
         self.input_resolution = input_resolution
         self.num_heads = num_heads
         self.window_size = window_size
+        self.window_size_plus = 1
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
-        if min(self.input_resolution) <= self.window_size:
-            # if window size is larger than input resolution, we don't partition windows
-            self.shift_size = 0
-            self.window_size = min(self.input_resolution)
-        assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
+        # if min(self.input_resolution) <= self.window_size:
+        #     # if window size is larger than input resolution, we don't partition windows
+        #     self.shift_size = 0
+        #     self.window_size = min(self.input_resolution)
+        # assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
-            dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+            dim, window_size=self.window_size, num_heads=num_heads,
+            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, input_size = self.input_resolution)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -237,22 +259,25 @@ class SwinTransformerBlock(nn.Module):
 
     def calculate_mask(self, x_size):
         # calculate attention mask for SW-MSA
+        window_size_plus = 1
+        window_size = [window_size_plus, self.window_size] if self.input_resolution[1] < 128 else [self.window_size, window_size_plus]
+        shift_size = [0, self.shift_size] if self.input_resolution[1] < 128 else [self.shift_size, 0]
         H, W = x_size
         img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
-        h_slices = (slice(0, -self.window_size),
-                    slice(-self.window_size, -self.shift_size),
-                    slice(-self.shift_size, None))
-        w_slices = (slice(0, -self.window_size),
-                    slice(-self.window_size, -self.shift_size),
-                    slice(-self.shift_size, None))
+        h_slices = (slice(0, -window_size[0]),
+                    slice(-window_size[0], -shift_size[0]),
+                    slice(-shift_size[0], None))
+        w_slices = (slice(0, -window_size[1]),
+                    slice(-window_size[1], -shift_size[1]),
+                    slice(-shift_size[1], None))
         cnt = 0
         for h in h_slices:
             for w in w_slices:
                 img_mask[:, h, w, :] = cnt
                 cnt += 1
 
-        mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
-        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        mask_windows = window_partition(img_mask, self.window_size, self.input_resolution)  # nW, window_size, window_size, 1
+        mask_windows = mask_windows.view(-1, 1 * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
         attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
 
@@ -266,16 +291,17 @@ class SwinTransformerBlock(nn.Module):
         shortcut = x
         x = self.norm1(x)  # x (4,9216,180) (batch_in_each_GPU, H*W, embedding_channel)
         x = x.view(B, H, W, C)  # x (4,96,96,180) (batch_in_each_GPU, embedding_channel, H, W)
+        # print(C)
 
         # cyclic shift
         if self.shift_size > 0:
-            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            shifted_x = torch.roll(x, shifts=(0, -self.shift_size), dims=(1, 2))
         else:
             shifted_x = x  # shifted_x (4,96,96,180) (batch_in_each_GPU, embedding_channel, H, W)
 
         # partition windows
-        x_windows = window_partition(shifted_x, self.window_size)  # (576,8,8,180) (nW*B, window_size, window_size, C)  nW:number of Windows
-        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # (576,64,180) (nW*B, window_size*window_size, C)  nW:number of Windows
+        x_windows = window_partition(shifted_x, self.window_size, self.input_resolution)  # (576,8,8,180) (nW*B, window_size, window_size, C)  nW:number of Windows
+        x_windows = x_windows.view(-1, 1 * self.window_size, C)  # (576,64,180) (nW*B, window_size*window_size, C)  nW:number of Windows
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         if self.input_resolution == x_size:
@@ -284,12 +310,12 @@ class SwinTransformerBlock(nn.Module):
             attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))  # (576,64,180) (nW*B, window_size*window_size, C)  nW:number of Windows
 
         # merge windows
-        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)  # (576,8,8,180) (nW*B, window_size, window_size, C)  nW:number of Windows
+        attn_windows = attn_windows.view(-1, 1, self.window_size, C) if self.input_resolution[1]<128 else attn_windows.view(-1, self.window_size, 1, C)# (576,8,8,180) (nW*B, window_size, window_size, C)  nW:number of Windows
         shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C shifted_x (4,96,96,180) (batch_in_each_GPU, embedding_channel, H, W)
 
         # reverse cyclic shift
         if self.shift_size > 0:
-            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            x = torch.roll(shifted_x, shifts=(0, self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
         x = x.view(B, H * W, C)  # x (4,9216,180) (batch_in_each_GPU, H*W, embedding_channel) x_size (96,96)
@@ -568,6 +594,13 @@ class PatchEmbed(nn.Module):
 
         self.in_chans = in_chans
         self.embed_dim = embed_dim
+        # # 使用卷积代替切分，适配非方形 patch
+        # self.proj = nn.Conv2d(
+        #     in_channels=1,  # 假设输入是 RGB 图像
+        #     out_channels=embed_dim,
+        #     kernel_size=patch_size,
+        #     stride=patch_size
+        # )
 
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
@@ -575,7 +608,8 @@ class PatchEmbed(nn.Module):
             self.norm = None
 
     def forward(self, x):
-        x = x.flatten(2).transpose(1, 2)  # B Ph*Pw C
+        # x = self.proj(x)  # 卷积切分
+        x = x.flatten(2).transpose(1, 2)  # B,C,Ph,Pw -> B,C,Ph*Pw -> B Ph*Pw C
         if self.norm is not None:
             x = self.norm(x)
         return x
@@ -708,7 +742,7 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=1,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
+                 embed_dim=96, depths=[6, 6], num_heads=[6, 6],
                  window_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
@@ -723,7 +757,7 @@ class SwinIR(nn.Module):
             rgb_mean = (0.4488, 0.4371, 0.4040)
             self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
         else:
-            self.mean = torch.zeros(1, 1, 1, 1)
+            self.mean = torch.ones(1, 1, 1, 1) * 0.5
         self.upscale = upscale  # 1
         self.upsampler = upsampler  # None
         self.window_size = window_size  # 8
@@ -868,7 +902,9 @@ class SwinIR(nn.Module):
 
     def forward(self, x):
         H, W = x.shape[2:]  # x (4,1,96,96) (batch_size_in_each_GPU, input_image_channel, H (random-crop 96 in traning and 256 in testing), W)
-        x = self.check_image_size(x)
+        # x = normalization2one(x)
+        x = self.check_image_size(x)  # 检查x的尺寸是否是window_size的整数倍，如果不是，进行padding
+        # self.mean = x.mean(dim=(1, 2, 3)).type_as(x)[:, None, None, None]
 
         self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
@@ -926,32 +962,38 @@ class SwinIR(nn.Module):
 if __name__ == '__main__':
     from thop import profile
     from thop import clever_format
+    from PIL import Image
     import os
     batch = 1
-    height = 256
-    width = 256
+    height = 128
+    width = 180
     device = 'cuda'
     torch.cuda.empty_cache()
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    # file_data = np.load('/home/ssddata/linshuijin/PETrecon/simulation_angular/angular_180/test_transverse_sinoHD.npy', allow_pickle=True)[:4, :, :]
+    # file_data = normalization2one(np.array(Image.open('../12.jpg'))[:1200, :1200, :1].transpose(2, 1, 0))
 
     print('swinmr')
     model = SwinIR(upscale=1,
                    in_chans=1,
-                   img_size=[256, 256],
-                   window_size=8,
+                   img_size=[128, 180],
+                   window_size=4,
+                   patch_size=[32, 1],
                    img_range=1.0,
-                   depths=[6, 6, 6, 6, 6, 6],
+                   depths=[2, 6, 2],
                    embed_dim=180,
-                   num_heads=[6, 6, 6, 6, 6, 6],
+                   num_heads=[3, 6, 12],
                    mlp_ratio=2.0,
                    upsampler='',
                    resi_connection='1conv',).to(device)
+    # modelu = PatchEmbed(1200, patch_size=8, in_chans=1, embed_dim=180, norm_layer=None)
 
 
     # print(model)
     # print('FLOPs: {}G'.format(round((model.flops() * 1e-9),3)))
     # print('PARAMs: {}M'.format(round((model.params() * 1e-6), 3)))
-    x = torch.randn((batch, 1, height, width)).to(device)
+    x = torch.randn(batch, 1, height, width).to(device)
+    # x = torch.from_numpy(file_data).to(device).unsqueeze(1).float()
     print(f'Input shape: {x.shape}')
     with torch.no_grad():
         x = model(x)

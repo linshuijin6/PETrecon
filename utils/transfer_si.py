@@ -1,6 +1,12 @@
+import time
+from warnings import warn
+
 import numpy as np
 import torch
-from skimage.transform import iradon
+# from skimage.transform import iradon, radon, warp
+import torch.nn.functional as F
+
+# radon()
 
 
 def gaussFilter(img, fwhm, is3d=False, batch_size=1, image_voxelSizeCm=(0.41725 / 2, 0.41725 / 2, 0.40625 / 2)):
@@ -27,19 +33,50 @@ def gaussFilter(img, fwhm, is3d=False, batch_size=1, image_voxelSizeCm=(0.41725 
     return imOut.flatten('F')
 
 
-def i2s(img, AN, sinogram_nAngular=180, psf=0):
+def s2i(sinodata, geoMatrix, tof=False, psf=0):
+    assert len(sinodata.shape) == 4
+    b, c, sinogram_nRadial, sinogram_nAngular = sinodata.shape
+    assert sinogram_nAngular % 180 == 0
+    dims = [b, sinogram_nRadial, sinogram_nRadial]
+    matrixSize = dims[1:]
+    y = torch.zeros([b, np.prod(matrixSize[:])], dtype=torch.float32, device=sinodata.device)
+    q = sinogram_nAngular // 2
+    # y = np.zeros([b, np.prod(matrixSize[:])], dtype='float')
+
+    for i in range(sinogram_nAngular // 2):
+        for j in range(sinogram_nRadial):
+            M0 = geoMatrix[0][i, j]
+            if not np.isscalar(M0):
+                M = torch.tensor(M0[:, 0:3], dtype=torch.int64, device=sinodata.device)  # 转为 tensor
+                G = torch.tensor(M0[:, 3] / 1e4, dtype=torch.float32, device=sinodata.device)
+                G = G.unsqueeze(0)
+                idx1 = M[:, 0] + M[:, 1] * matrixSize[0]
+                idx2 = M[:, 1] + matrixSize[0] * (matrixSize[0] - 1 - M[:, 0])
+                # 计算 img_subset1 和 img_subset2
+                sino_subset1 = sinodata[:, :, j, i]
+                sino_subset2 = sinodata[:, :, j, i + q]
+
+                # 执行并行计算
+                y[:, idx1] += (sino_subset1 @ G)  # 使用矩阵乘法
+                y[:, idx2] += (sino_subset2 @ G)  # 使用矩阵乘法
+    img = torch.reshape(y, dims)
+
+    return img
+
+
+def i2s(img, geoMatrix, sinogram_nAngular=180, psf=0, counts=1e9, randomsFraction=0, NF=1):
     # img.shape = (batchsize, h, w)
-    img = img.squeeze(1) if len(img.shape)==4 else img
+    img = img.unsqueeze(1) if len(img.size()) == 3 else img
     img = img.float()
     assert isinstance(img, torch.Tensor)
-    sinogram_nRadial = img.shape[1]
+    sinogram_nRadial = img.shape[2]
     # img = img*AN
     if img.ndimension() == 2:
         batch_size = 1
         img = img.unsqueeze(0)
     else:
         batch_size = img.shape[0]
-    img = img.view(batch_size, -1)
+    img = img.permute(0, 1, 3, 2).contiguous().view(batch_size, -1)
     if psf:
         for b in range(batch_size):
             img[b, :] = gaussFilter(img[b, :], psf)
@@ -49,24 +86,46 @@ def i2s(img, AN, sinogram_nAngular=180, psf=0):
     matrixSize = [sinogram_nRadial, sinogram_nRadial]
     q = sinogram_nAngular // 2
 
-    geoMatrix = []
-    geoMatrix.append(np.load("./tmp_1/" + 'geoMatrix-0.npy', allow_pickle=True))
-
     for i in range(sinogram_nAngular // 2):
+        # time_s = time.time()
         for j in range(sinogram_nRadial):
             M0 = geoMatrix[0][i, j]
             if not np.isscalar(M0):
-                M = torch.tensor(M0[:, 0:3], dtype=torch.int32, device=img.device)  # 转为 tensor
+                M = torch.tensor(M0[:, 0:3], dtype=torch.int64, device=img.device)  # 转为 tensor
                 G = torch.tensor(M0[:, 3] / 1e4, dtype=torch.float32, device=img.device)  # 转为 tensor
                 idx1 = M[:, 0] + M[:, 1] * matrixSize[0]
                 idx2 = M[:, 1] + matrixSize[0] * (matrixSize[0] - 1 - M[:, 0])
-                for b in range(batch_size):
-                    y[b, j, i] = torch.dot(G, img[b, idx1.long()])
-                    y[b, j, i + q] = torch.dot(G, img[b, idx2.long()])
-    if batch_size == 1:
-        y = y[0, :, :]
-    # print(f'{batch_size} batches forward-projected\n')
-    return y
+                # 计算 img_subset1 和 img_subset2
+                img_subset1 = img[:, idx1]
+                img_subset2 = img[:, idx2]
+
+                # 执行并行计算
+                y[:, j, i] = (img_subset1 @ G)  # 使用矩阵乘法
+                y[:, j, i + q] = (img_subset2 @ G)  # 使用矩阵乘法
+        # print(f'{i}/90', time.time()-time_s)
+    if np.isscalar(counts):
+        counts = counts * torch.ones(batch_size, ).to(img.device)
+
+    truesFraction = 1 - randomsFraction
+    # 添加 Poisson 噪声、散射噪声等，引入计数量控制
+    y_poisson = torch.zeros_like(y).to(img.device)
+    for b in range(batch_size):
+        scale_factor = counts[b] * truesFraction / y[b, :, :].sum()
+        # scale_factor[np.isinf(scale_factor)] = 0
+        # y_poisson[b,:,:] = np.random.poisson(y_att[b,:,:]*scale_factor)/scale_factor # 貌似不太合理，再除以比例后，scale_factor不起作用
+        y_poisson[b, :, :] = torch.poisson(y[b, :, :] * scale_factor).to(img.device)
+        # y_poisson[np.isinf(y_poisson)] = 0
+    Randoms = torch.zeros_like(y).to(img.device)
+    # r_poisson = torch.ones_like(img).to(img.device)
+    r_poisson = torch.ones_like(y).to(img.device)
+    if randomsFraction != 0:
+        for b in range(batch_size):
+            scale_factor_randoms = counts[b] * randomsFraction / r_poisson[b, :, :].sum()
+            r_poisson[b, :, :] = torch.poisson(
+                r_poisson[b, :, :] * scale_factor_randoms) / scale_factor_randoms
+        Randoms = r_poisson
+    prompts = y_poisson * NF + Randoms
+    return prompts
 
 
 def _sinogram_circle_to_square(sinogram, device='cuda'):
@@ -147,9 +206,10 @@ def interp(x, xp, fp):
     :param fp: 已知数据点的 y 坐标
     :return: 在 x 位置的插值值
     """
-    x = torch.tensor(x, dtype=torch.float32, device=xp.device)
-    xp = torch.tensor(xp, dtype=torch.float32, device=xp.device)
-    fp = torch.tensor(fp, dtype=torch.float32, device=fp.device)
+    # fp = f(xp)
+    # x = torch.tensor(x, dtype=torch.float32, device=xp.device)
+    # xp = torch.tensor(xp, dtype=torch.float32, device=xp.device)
+    # fp = torch.tensor(fp, dtype=torch.float32, device=fp.device)
 
     # 确保 xp 是递增的，否则排序
     indices = torch.argsort(xp)
@@ -169,24 +229,26 @@ def interp(x, xp, fp):
     y_right = fp[right]
 
     slope = (y_right - y_left) / (x_right - x_left)
-    return y_left + slope * (x - x_left)
+    out = y_left + slope * (x - x_left)
+    return out.to(xp.device)
 
 
-def s2i_batch(radon_image):
+def s2i_batch(radon_image, theta, device_now):
     # radon_image: batchsize, channel=1, h, w
     assert len(radon_image.shape) == 4
     radon_image = radon_image.squeeze(1)
-    sino_t = []
+    img_t = []
     for sino in radon_image:
-        sino_t.append(s2i(sino))
-    out_sino = torch.stack(sino_t, 0)
-    out_sino = out_sino.unsqueeze(1)
-    return out_sino
+        img_t.append(s2i(sino, theta, device=device_now))
+    out_img = torch.stack(img_t, 0)
+    out_img = out_img.unsqueeze(1)
+    return out_img
 
 
-def s2i(radon_image, theta=None, output_size=None,
-        filter_name="ramp", interpolation="linear", circle=True,
-        preserve_range=True, device='cuda'):
+def s2i_radon(radon_image, n_theta=None, output_size=None,
+              filter_name="ramp", interpolation="linear", circle=True,
+              preserve_range=True, device='cuda:0'):
+    # recode from skimage.transform.iradon
     import torch
     import numpy as np
     from torch.fft import fft, ifft
@@ -199,8 +261,11 @@ def s2i(radon_image, theta=None, output_size=None,
     # 将 radon_image 转换为 GPU 上的 float tensor
     radon_image = radon_image.to(device).float()
 
-    if theta is None:
+    if n_theta is None:
         theta = torch.linspace(0, 180, radon_image.shape[1], device=device, dtype=torch.float32,
+                               requires_grad=False)
+    else:
+        theta = torch.linspace(0, n_theta, radon_image.shape[1], device=device, dtype=torch.float32,
                                requires_grad=False)
 
     angles_count = len(theta)
@@ -233,7 +298,7 @@ def s2i(radon_image, theta=None, output_size=None,
         img_shape = radon_image.shape[0]
 
     # 将图像大小调整为 2 的幂次以加速 Fourier 变换
-    projection_size_padded = max(64, int(2 ** torch.ceil(torch.log2(torch.tensor(2 * img_shape, device=device)))))
+    projection_size_padded = max(64, int(2 ** torch.ceil(torch.log2(torch.tensor(img_shape, device=device)))))
     pad_width = ((0, projection_size_padded - img_shape), (0, 0))
     img = torch.nn.functional.pad(radon_image, (0, 0, 0, projection_size_padded - img_shape), 'constant', 0)
 
@@ -257,7 +322,7 @@ def s2i(radon_image, theta=None, output_size=None,
             col_np = col.cpu().numpy()  # 需要将数据移到CPU上，使用 interp1d
             interpolant = interp1d(x.cpu().numpy(), col_np, kind=interpolation, bounds_error=False, fill_value=0)
             t_np = t.cpu().numpy()
-        reconstructed += torch.tensor(interpolant(x=t), device=device)
+        reconstructed += interpolant(x=t)
 
     if circle:
         out_reconstruction_circle = (xpr ** 2 + ypr ** 2) > radius ** 2
@@ -267,3 +332,100 @@ def s2i(radon_image, theta=None, output_size=None,
 
     return reconstructed * pi / (2 * angles_count)
     # iradon()
+
+
+def gpu_warp(image, angle):
+    import torch
+    import torch.nn.functional as F
+
+    # 假设 cos_a 和 sin_a 是旋转角度的余弦和正弦值
+    cos_a = torch.cos(angle)
+    sin_a = torch.sin(angle)
+
+    # 获取输入图像的尺寸
+    h, w = image.shape
+    image = image.unsqueeze(0).unsqueeze(0)
+
+    # 定义旋转中心 (center_x, center_y)
+    center_x, center_y = w / 2, h / 2
+
+    # 生成 2x3 的仿射变换矩阵
+    R = torch.tensor([[cos_a, sin_a, 0],
+                      [-sin_a, cos_a, 0]], device=image.device)
+
+    # 扩展维度，以适应 grid_sample 的输入格式
+    R = R.unsqueeze(0)  # 1x2x3
+
+    # 生成仿射网格
+    grid = F.affine_grid(R, size=image.size(), align_corners=False)
+
+    # 进行仿射变换
+    rotated = F.grid_sample(image, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+    return rotated.squeeze(0).squeeze(0)
+
+
+def i2s_radon(image, n_theta=None, circle=True, preserve_range=False, use_gpu=False):
+    if image.ndim != 2:
+        raise ValueError('The input image must be 2-D')
+
+    # 确定使用的设备（CPU或GPU）
+    device = torch.device('cuda' if use_gpu and torch.cuda.is_available() else 'cpu')
+
+    # 默认角度范围
+    theta = torch.arange(n_theta, device=device)
+
+    # 将图像转换为float类型，保持范围
+    image = torch.tensor(image, dtype=torch.float32, device=device)
+
+    if preserve_range:
+        image = image / torch.max(image)
+
+    # 判断是否使用圆形裁剪
+    if circle:
+        shape_min = min(image.shape)
+        radius = shape_min // 2
+        img_shape = torch.tensor(image.shape, device=device)
+
+        coords = torch.stack(torch.meshgrid(torch.arange(image.shape[0], device=device),
+                                            torch.arange(image.shape[1], device=device)), dim=-1)
+        dist = ((coords - img_shape // 2) ** 2).sum(-1)
+        outside_reconstruction_circle = dist > radius ** 2
+
+        if torch.any(image[outside_reconstruction_circle]):
+            warn('Radon transform: image must be zero outside the reconstruction circle')
+
+        # 截取为正方形
+        slices = tuple(slice(int(np.ceil(excess / 2)),
+                             int(np.ceil(excess / 2) + shape_min))
+                       if excess > 0 else slice(None)
+                       for excess in (img_shape - shape_min).cpu().numpy())
+        padded_image = image[slices]
+    else:
+        diagonal = np.sqrt(2) * max(image.shape)
+        pad = [int(np.ceil(diagonal - s)) for s in image.shape]
+        new_center = [(s + p) // 2 for s, p in zip(image.shape, pad)]
+        old_center = [s // 2 for s in image.shape]
+        pad_before = [nc - oc for oc, nc in zip(old_center, new_center)]
+        pad_width = [(pb, p - pb) for pb, p in zip(pad_before, pad)]
+
+        padded_image = F.pad(image, pad_width, mode='constant', value=0)
+
+    # 确保填充后的图像是正方形
+    if padded_image.shape[0] != padded_image.shape[1]:
+        raise ValueError('padded_image must be a square')
+
+    center = padded_image.shape[0] // 2
+    radon_image = torch.zeros((padded_image.shape[0], n_theta), dtype=padded_image.dtype, device=device)
+
+    # 计算Radon变换
+    for i, angle in enumerate(theta):
+        # cos_a, sin_a = torch.cos(angle), torch.sin(angle)
+        # R = torch.tensor([[cos_a, sin_a, -center * (cos_a + sin_a - 1)],
+        #                   [-sin_a, cos_a, -center * (cos_a - sin_a - 1)],
+        #                   [0, 0, 1]], device=device)
+        #
+        # rotated = torch.tensor(warp(padded_image.cpu().numpy(), R.cpu().numpy(), clip=False), device=device)
+        ro = gpu_warp(padded_image, torch.deg2rad(angle))
+        radon_image[:, i] = ro.sum(0)
+
+    return radon_image
