@@ -9,6 +9,8 @@ from PIL import Image
 from torch import nn, optim
 from torch.utils.data import DistributedSampler, DataLoader, random_split
 import matplotlib.pyplot as plt
+
+from filter_design.wavelet_trans import WaveletFilterNet
 from geometry.BuildGeometry_v4 import BuildGeometry_v4
 from utils.radon import Radon
 from utils.data import DatasetPETRecon, tv_loss
@@ -53,9 +55,9 @@ def simulate_geometry(device):
     return PET
 
 
-def train(model_pre, radon, train_loader, criterion, optimizer, rank, epoch, log_writer):
+def train(model_pre, model_recon, radon, train_loader, criterion, optimizer, rank, epoch, log_writer):
     model_pre.train()
-    # model_recon.train()
+    model_recon.train()
     running_loss = 0.0
 
     for iteration, (inputs, Y, sino_label, picLD) in enumerate(train_loader):
@@ -82,8 +84,6 @@ def train(model_pre, radon, train_loader, criterion, optimizer, rank, epoch, log
 
         mask_p1, mask_p2 = generate_mask(mid_recon.shape, 0.5)
 
-        # mask_p1, _ = generate_mask(aver_x.shape, 0.1)
-        # _, mask_p2 = generate_mask(aver_x.shape, 0.1)
         mask_p1, mask_p2 = torch.from_numpy(mask_p1).unsqueeze(1).float().to(rank), torch.from_numpy(mask_p2).unsqueeze(
             1).float().to(rank)
         i_in_m1, i_in_m2 = mid_recon * mask_p1, mid_recon * mask_p2
@@ -253,7 +253,7 @@ def validate(model_pre, radon, val_loader, criterion, rank, epoch, log_writer):
 
 def test(model_pre, radon, test_loader, criterion, rank, log):
     logger.info('load net parameters...')
-    model_pre.load_state_dict(torch.load(os.path.join(args.log_dir, "./denoise_pre_weight_best.pth")))
+    model_pre.load_state_dict(torch.load(os.path.join(args.log_dir, "denoise_pre_weight_best.pth")))
     model_pre.eval()
     running_loss = 0.0
 
@@ -320,13 +320,13 @@ def main(logger, args, config, log_writer):
                                resi_connection='1conv', ).to(rank)
     # denoise_model_pre = PETDenoiseNet(device=rank).to(rank)
     # log_writer.add_graph(denoise_model_pre, torch.randn(args.bs, 1, 128, 180).to(rank))
-    # denoise_model = PETReconNet(radon, device=rank, config=config).to(rank)
+    denoise_model = WaveletFilterNet(128, 180).to(rank)
     logger.info(denoise_model_pre)
-    # logger.info(denoise_model)
+    logger.info(denoise_model)
     # log_writer.add_graph(denoise_model, [torch.randn(args.bs, 1, 128, 128).to(rank), torch.randn(args.bs, 1, 128, 180).to(rank), torch.randn(args.bs, 1, 128, 180).to(rank)])
 
     if args.checkpoints:
-        denoise_model_pre.load_state_dict(torch.load(f'./model/denoise_pre_weight_best.pth'))
+        denoise_model_pre.load_state_dict(torch.load(f'./model_saved/denoise_pre_weight_best.pth'))
         logger.info('load pre model...')
         # denoise_model.load_state_dict(torch.load(f'./model/denoise_weight_best.pth'))
     # print(torch.cuda.memory_summary())
@@ -353,7 +353,7 @@ def main(logger, args, config, log_writer):
             writer_1.close()  # 训练结束，不再写入数据，关闭writer
             if val_loss < val_loss_best:
                 val_loss_best = val_loss
-                torch.save(denoise_model_pre.state_dict(), os.path.join(args.log_dir, "./denoise_pre_weight_best.pth"))
+                torch.save(denoise_model_pre.state_dict(), os.path.join(args.log_dir, "denoise_pre_weight_best.pth"))
                 # torch.save(denoise_model.state_dict(), os.path.join(args.log_dir, "./denoise_weight_best.pth"))
                 logger.info(f'Model saved! best in {epoch} for {val_loss:.4f}')
     logger.info('start test !')
@@ -368,7 +368,7 @@ if __name__ == '__main__':
     parser.add_argument('--root_path', default='./simulation_angular/', type=str,
                         help='Input images')
     parser.add_argument('--lr', default=2e-5, type=float, help='learning rate')
-    parser.add_argument('--ratio', default=0.4, type=float, help='noise ratio')
+    parser.add_argument('--ratio', default=0.2, type=float, help='noise ratio')
 
     parser.add_argument('--alpha', default=0.2, type=float, help='importance of the smooth of sinogram')
     parser.add_argument('--beta', default=0.4, type=float, help='importance of the delta of pic')
@@ -386,11 +386,12 @@ if __name__ == '__main__':
     parser.add_argument('--loss', default='L1', type=str, help='loss mode, L1 or L2')
     parser.add_argument('--show_tr', default=True, type=bool, help='whether to show results')
     parser.add_argument('--show_val', default=True, type=bool, help='whether to show results')
-    parser.add_argument('--checkpoints', default=True, type=bool, help='whether to continue the last training')
+    parser.add_argument('--checkpoints', default=False, type=bool, help='whether to continue the last training')
     parser.add_argument('--test', default=False, type=bool, help='only for test or not')
 
     args = parser.parse_args()
     seed = random.randint(0, 10000000)
+    # seed = 8238551
     preset_seed(seed)
     n_theta = 180
     recon_size = 128

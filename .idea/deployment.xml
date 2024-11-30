@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="linshuijin@10.181.8.117:3002 password (4)" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="linshuijin@10.181.8.117:3002 password (3)" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
       <paths name="linshuijin@10.181.8.117:3001 password">
@@ -171,7 +171,7 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="linshuijin@202.117.13.245:3001">
+      <paths name="linshuijin@202.117.13.245:3001 password">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />

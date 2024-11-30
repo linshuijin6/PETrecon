@@ -58,6 +58,7 @@ def train(model_pre, model_recon, radon, train_loader, criterion, optimizer, ran
         # 平均输出的sinogram
         aver_x = (x1_denoised + normalization2one(x2_denoised)) / 2
 
+        # 以下为PET去噪器的原自监督设计，源于DSFormer
         # PET图去噪
 
         mask_p1, mask_p2 = generate_mask(aver_x.shape, 0.4)
